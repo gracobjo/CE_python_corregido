@@ -1,6 +1,8 @@
-# Curso de Python
+# Tema 1 — Lenguaje Python
 
-Material de apoyo para aprender Python mediante notebooks de Jupyter. El contenido avanza desde los conceptos básicos del lenguaje hasta funciones, estructuras de datos, iteradores, generadores, fechas, números aleatorios y módulos.
+Parte del [curso de especialización](../README.md). El contenido avanza desde los conceptos básicos hasta funciones, estructuras de datos, iteradores, generadores, fechas, números aleatorios, módulos, excepciones y `math`.
+
+Índice del tema: [`00_IndiceTema1.ipynb`](00_IndiceTema1.ipynb) · Índice general: [`../Indice_CE_Python.ipynb`](../Indice_CE_Python.ipynb)
 
 ## Contenido
 
@@ -8,7 +10,7 @@ Los notebooks están organizados de forma progresiva:
 
 | Notebook | Tema |
 | --- | --- |
-| `00_IndicePython.ipynb` | Índice del curso |
+| `00_IndiceTema1.ipynb` | Índice del Tema 1 |
 | `01_Generalidades_REV.ipynb` | Conceptos generales de Python |
 | `02_EstructuraIF_REV.ipynb` | Condicionales `if`, `elif` y `else` |
 | `03_EstructuraMATCH_REV.ipynb` | Estructura `match` |
@@ -28,6 +30,8 @@ Los notebooks están organizados de forma progresiva:
 | `17_FuncionesDefLambda_REV.ipynb` | Refactorización de funciones `def` a `lambda` |
 | `18_NumerosAleatorios_REV.ipynb` | Módulo `random` |
 | `19_Modulos_REV.ipynb` | Importación de módulos |
+| `20_Excepciones_REV.ipynb` | Excepciones |
+| `21_Math_REV.ipynb` | Módulo `math` |
 | `modulopersonalizado.py` | Módulo de ejemplo (tema 19) |
 
 ## Ejercicios
@@ -36,7 +40,7 @@ La carpeta [`Ejercicios/`](Ejercicios/) contiene un cuaderno de práctica por te
 
 Índices y referencias:
 
-- [`00_IndicePython.ipynb`](00_IndicePython.ipynb) — índice general (teoría + ejercicios)
+- [`00_IndiceTema1.ipynb`](00_IndiceTema1.ipynb) — índice del Tema 1
 - [`Ejercicios/00_IndiceEjercicios.ipynb`](Ejercicios/00_IndiceEjercicios.ipynb) — tabla teoría ↔ práctica
 - [`Ejercicios/Ejercicios01.ipynb`](Ejercicios/Ejercicios01.ipynb) — práctica integrada (conjuntos + fechas)
 - [`Ejercicios/Ejercicios01_Soluciones.ipynb`](Ejercicios/Ejercicios01_Soluciones.ipynb) — soluciones **propuestas** + **mejoras** + código **óptimo**
