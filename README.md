@@ -16,6 +16,14 @@ Material de apoyo en notebooks de Jupyter, organizado por temas.
 1. Abre [`Indice_CE_Python.ipynb`](Indice_CE_Python.ipynb).
 2. Entra en el índice del tema (`00_IndiceTema1.ipynb` o `00_IndiceTema2.ipynb`).
 3. Estudia el notebook de teoría y practica en `Ejercicios/`.
+4. En Tema 2, el laboratorio [`Ejercicios05_ProyectosPOO_REV.ipynb`](Tema%202%20-%20Programaci%C3%B3n%20Orientada%20a%20Objetos/Ejercicios/Ejercicios05_ProyectosPOO_REV.ipynb) resume los pilares POO antes de pasar a los repos completos.
+
+## Proyectos POO relacionados
+
+| Repositorio | Uso |
+|-------------|-----|
+| [poo_animales](https://github.com/gracobjo/poo_animales) | ABC, herencia, encapsulamiento, polimorfismo |
+| [poo_inmobiliaria](https://github.com/gracobjo/poo_inmobiliaria) | Properties, enums, reglas de negocio, UI y persistencia |
 
 ## Requisitos
 
