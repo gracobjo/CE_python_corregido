@@ -16,5 +16,3 @@ class Coche:
 
     def ver_coche(self):
         return f"Coche: {self.marca} {self.modelo}"
-
-
