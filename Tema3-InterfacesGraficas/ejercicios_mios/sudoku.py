@@ -203,6 +203,25 @@ def crear_puzzle(tablero_resuelto, dificultad):
             eliminadas += 1
     return puzzle
 
+def reparar_unicidad(tablero_fijo, tablero_resuelto):
+    """
+    Si el puzzle fijo admite más de una solución (partidas antiguas),
+    rellena pistas mínimas desde la solución hasta dejar exactamente 1.
+    Devuelve (nuevo_fijo, num_pistas_añadidas).
+    """
+    fijo = copy.deepcopy(tablero_fijo)
+    if contar_soluciones(fijo, limite=2) == 1:
+        return fijo, 0
+    vacias = [(i, j) for i in range(9) for j in range(9) if fijo[i][j] == 0]
+    random.shuffle(vacias)
+    anadidas = 0
+    for i, j in vacias:
+        if contar_soluciones(fijo, limite=2) == 1:
+            break
+        fijo[i][j] = tablero_resuelto[i][j]
+        anadidas += 1
+    return fijo, anadidas
+
 def buscar_rectangulo_mortal(cands):
     """
     Busca 4 casillas vacías en rectángulo (2 filas × 2 cols) con el MISMO par
@@ -484,6 +503,16 @@ class CeldaSudoku(tk.Frame):
                         text=str(n), fg=self.COLOR_CAND_AMB,
                         font=self.FONT_CAND_UNIC, cursor="hand2",
                     )
+                elif (
+                    forzar_solucion
+                    and valor_solucion is not None
+                    and n != valor_solucion
+                ):
+                    # Candidato descartado por la solución de la partida
+                    btn.config(
+                        text=str(n), fg="#CFD8DC",
+                        font=self.FONT_CAND, cursor="hand2",
+                    )
                 else:
                     # Varios candidatos o "único" engañoso por números mal puestos
                     btn.config(
@@ -571,6 +600,7 @@ class SudokuApp:
         self._celdas_conflicto_bg      = set()   # fondo rojo de conflictos activos
         self._ultimo_aviso_conflicto   = 0
         self._actualizando_cands       = False
+        self._ambiguedad_ofrecida      = None  # firma del rectángulo ya ofrecido
 
         # Temporizador de partida
         self._segundos_acumulados = 0      # tiempo ya jugado (p. ej. al retomar)
@@ -753,23 +783,52 @@ class SudokuApp:
                         bg_extra=bg_extra, valor_solucion=sol,
                         forzar_solucion=(i, j) in celdas_rect,
                     )
-            # Aviso breve si el foco está en el rectángulo (sin pisar pista activa)
-            if (
-                rect
-                and self._celda_focus in celdas_rect
-                and not self._celdas_resaltadas
-            ):
+            # Aviso + oferta de relleno si hay rectángulo mortal
+            if rect and not self._celdas_resaltadas:
                 a, b = rect[0]
                 self.estado.config(
                     text=(
-                        f"Ambigüedad {a}/{b}: 4 casillas con el mismo par "
-                        f"(rectángulo). Candidato azul = solución de esta partida. "
-                        f"Pulsa «Pista» para la explicación."
+                        f"Ambigüedad {a}/{b}: 4 casillas con el mismo par. "
+                        f"Azul = elige este; gris claro = no. "
+                        f"Pulsa «Pista» o acepta rellenarlas."
                     ),
                     fg=self.COLOR_ESTADO_INF,
                 )
+                firma = (rect[0], tuple(rect[1]))
+                if self._ambiguedad_ofrecida != firma:
+                    self._ambiguedad_ofrecida = firma
+                    self.root.after(
+                        50, lambda r=rect: self._ofrecer_resolver_ambiguedad(r)
+                    )
         finally:
             self._actualizando_cands = False
+
+    def _ofrecer_resolver_ambiguedad(self, rect):
+        """Pregunta una sola vez si rellenar las 4 casillas del rectángulo mortal."""
+        if self._partida_terminada or not self.tablero_resuelto:
+            return
+        par, celdas = rect
+        actual = self.obtener_tablero_actual()
+        if any(actual[i][j] != 0 for i, j in celdas):
+            return
+        a, b = par
+        detalles = "\n".join(
+            f"  · fila {i+1}, col {j+1} → {self.tablero_resuelto[i][j]}"
+            for i, j in celdas
+        )
+        if messagebox.askyesno(
+            "Ambigüedad (2 soluciones posibles)",
+            f"Hay 4 casillas con el par {{{a},{b}}} en rectángulo.\n"
+            f"La lógica admite dos diagonales; esta partida elige:\n\n"
+            f"{detalles}\n\n"
+            f"¿Colocar esos 4 números ahora?",
+        ):
+            for i, j in celdas:
+                self.colocar_numero(i, j, self.tablero_resuelto[i][j])
+            self.estado.config(
+                text="Ambigüedad resuelta con la solución de esta partida.",
+                fg=self.COLOR_ESTADO_OK,
+            )
 
     # ------------------------------------------------------------------
     # DETECCIÓN DE CONFLICTOS EN TIEMPO REAL
@@ -1237,9 +1296,21 @@ class SudokuApp:
     def _cargar_estado(self, datos):
         self.tablero_resuelto = datos["tablero_resuelto"]
         self.tablero_fijo     = datos["tablero_fijo"]
-        tablero_actual        = datos["tablero_actual"]
+        tablero_actual        = copy.deepcopy(datos["tablero_actual"])
         self._limpiar_resaltado_pista()
         self._ultimo_aviso_conflicto = -1
+        self._ambiguedad_ofrecida = None
+
+        # Partidas antiguas podían tener 2 soluciones → añadir pistas mínimas
+        self.tablero_fijo, n_extra = reparar_unicidad(
+            self.tablero_fijo, self.tablero_resuelto
+        )
+        if n_extra:
+            for i in range(9):
+                for j in range(9):
+                    if self.tablero_fijo[i][j] != 0:
+                        # La pista nueva prevalece (corrige ambigüedad)
+                        tablero_actual[i][j] = self.tablero_fijo[i][j]
 
         for i in range(9):
             for j in range(9):
@@ -1261,11 +1332,25 @@ class SudokuApp:
         self._refrescar_candidatos()
         previos = int(datos.get("segundos_juego", 0))
         self._iniciar_timer(previos)
+        extra = (
+            f" Se añadieron {n_extra} pista(s) para dejar solución única."
+            if n_extra else ""
+        )
         self.estado.config(
             text=(f"Partida «{datos['dificultad']}» retomada "
-                  f"(tiempo previo {formatear_tiempo(previos)}). ¡A seguir!"),
+                  f"(tiempo previo {formatear_tiempo(previos)}).{extra}"),
             fg=self.COLOR_ESTADO_OK
         )
+        if n_extra:
+            messagebox.showinfo(
+                "Partida corregida",
+                "Esta partida guardada tenía más de una solución "
+                "(generada con una versión anterior).\n\n"
+                f"Se han añadido {n_extra} pista(s) fijas para que "
+                "quede una única solución y no reaparezca el "
+                "rectángulo con el mismo par de candidatos.",
+            )
+            self._guardar_estado_actual()
 
     def mostrar_records(self):
         records = cargar_records()
@@ -1483,6 +1568,7 @@ class SudokuApp:
         self._limpiar_resaltado_pista()
         self._ultimo_aviso_conflicto = 0
         self._celda_focus = None
+        self._ambiguedad_ofrecida = None
 
         eliminar_guardado(dif)
 
