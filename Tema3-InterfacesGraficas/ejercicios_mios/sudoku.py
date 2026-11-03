@@ -52,6 +52,40 @@ def eliminar_guardado(dificultad):
     if os.path.exists(ruta):
         os.remove(ruta)
 
+def partida_tiene_progreso(tablero_fijo, tablero_actual):
+    """True si el jugador ha rellenado alguna casilla que no era pista."""
+    for i in range(9):
+        for j in range(9):
+            if tablero_fijo[i][j] == 0 and tablero_actual[i][j] != 0:
+                return True
+    return False
+
+def partida_esta_completa(tablero_actual, tablero_resuelto):
+    """True si el tablero actual coincide con la solución."""
+    for i in range(9):
+        for j in range(9):
+            if tablero_actual[i][j] != tablero_resuelto[i][j]:
+                return False
+    return True
+
+def guardado_es_retomable(datos):
+    """
+    Un .json solo se ofrece al arrancar si hay progreso real y no está ya resuelto.
+    (Evita restos tras ganar o tras guardar un 'Nuevo juego' sin jugar.)
+    """
+    if not datos:
+        return False
+    actual = datos.get("tablero_actual")
+    fijo = datos.get("tablero_fijo")
+    sol = datos.get("tablero_resuelto")
+    if not actual or not fijo or not sol:
+        return False
+    if partida_esta_completa(actual, sol):
+        return False
+    if not partida_tiene_progreso(fijo, actual):
+        return False
+    return True
+
 def cargar_records():
     if not os.path.exists(RUTA_RECORDS):
         return {}
@@ -462,7 +496,8 @@ class CeldaSudoku(tk.Frame):
         self._bloqueada = bloqueada
 
     def actualizar_candidatos(self, posibles, unicos_hidden, bg_extra=None,
-                              valor_solucion=None, forzar_solucion=False):
+                              valor_solucion=None, forzar_solucion=False,
+                              mostrar=True):
         """
         posibles: candidatos legales con el tablero actual.
         unicos_hidden: números únicos en fila/col/caja (pueden ser falsos si hay errores).
@@ -470,10 +505,20 @@ class CeldaSudoku(tk.Frame):
                         si el candidato único coincide con él (propuesta inequívoca real).
         forzar_solucion: True en rectángulo mortal / ambigüedad → marcar en azul
                          el dígito de la solución guardada de la partida.
+        mostrar: si False, actualiza _posibles pero no pinta los números pequeños.
         """
         if self._valor != 0:
             return
         self._posibles = set(posibles)
+        if not mostrar:
+            for btn in self.cand_btns.values():
+                btn.config(
+                    text="", fg=self.COLOR_CAND_VACIO,
+                    font=self.FONT_CAND, cursor="arrow",
+                )
+            if bg_extra is not None:
+                self.set_bg(bg_extra)
+            return
         naked = len(posibles) == 1
         for n, btn in self.cand_btns.items():
             if n in self._posibles:
@@ -558,7 +603,12 @@ class CeldaSudoku(tk.Frame):
         if self._bloqueada:
             return "break"
         self.app.seleccionar_celda(self.fila, self.col)
-        if not colocar or self._fijo or self._valor != 0:
+        if (
+            not colocar
+            or self._fijo
+            or self._valor != 0
+            or not self.app.mostrar_candidatos
+        ):
             return "break"
         if num in self._posibles:
             self.app.colocar_numero(self.fila, self.col, num)
@@ -601,6 +651,7 @@ class SudokuApp:
         self._ultimo_aviso_conflicto   = 0
         self._actualizando_cands       = False
         self._ambiguedad_ofrecida      = None  # firma del rectángulo ya ofrecido
+        self.mostrar_candidatos        = False  # por defecto ocultos
 
         # Temporizador de partida
         self._segundos_acumulados = 0      # tiempo ya jugado (p. ej. al retomar)
@@ -630,6 +681,11 @@ class SudokuApp:
                   bg="#4CAF50", fg="white", width=10).pack(side=tk.LEFT, padx=4)
         tk.Button(frame1, text="Pista (Ayuda)", command=self.dar_pista,
                   bg="#2196F3", fg="white", width=11).pack(side=tk.LEFT, padx=4)
+        self.btn_mostrar_candidatos = tk.Button(
+            frame1, text="Mostrar candidatos", command=self.alternar_mostrar_candidatos,
+            bg="#00897B", fg="white", width=16,
+        )
+        self.btn_mostrar_candidatos.pack(side=tk.LEFT, padx=4)
         tk.Button(frame1, text="Comprobar",    command=self.comprobar_tablero,
                   bg="#FF9800", fg="white", width=10).pack(side=tk.LEFT, padx=4)
         tk.Button(frame1, text="Tutorial",     command=self.mostrar_tutorial,
@@ -659,20 +715,24 @@ class SudokuApp:
         )
         self.lbl_tiempo.pack(side=tk.LEFT)
 
-        # Leyenda de candidatos
-        leyenda = tk.Frame(self.root, pady=2)
-        leyenda.pack()
-        tk.Label(leyenda, text="Candidatos:", font=("Arial", 9)).pack(side=tk.LEFT, padx=(8, 2))
-        tk.Label(leyenda, text="● normal", fg=CeldaSudoku.COLOR_CAND_NORMAL,
+        # Leyenda de candidatos (solo visible con «Mostrar candidatos»)
+        self.leyenda = tk.Frame(self.root, pady=2)
+        tk.Label(self.leyenda, text="Candidatos:", font=("Arial", 9)).pack(
+            side=tk.LEFT, padx=(8, 2)
+        )
+        tk.Label(self.leyenda, text="● normal", fg=CeldaSudoku.COLOR_CAND_NORMAL,
                  font=("Arial", 9)).pack(side=tk.LEFT, padx=6)
-        tk.Label(leyenda, text="● forzado (casilla)", fg=CeldaSudoku.COLOR_CAND_NAKED,
+        tk.Label(self.leyenda, text="● forzado (casilla)", fg=CeldaSudoku.COLOR_CAND_NAKED,
                  font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=6)
-        tk.Label(leyenda, text="● forzado (fila/col/caja)", fg=CeldaSudoku.COLOR_CAND_HIDDEN,
+        tk.Label(self.leyenda, text="● forzado (fila/col/caja)", fg=CeldaSudoku.COLOR_CAND_HIDDEN,
                  font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=6)
-        tk.Label(leyenda, text="● ambigüedad→solución", fg=CeldaSudoku.COLOR_CAND_AMB,
+        tk.Label(self.leyenda, text="● ambigüedad→solución", fg=CeldaSudoku.COLOR_CAND_AMB,
                  font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=6)
-        tk.Label(leyenda, text="(gris = posible · verde/morado = inequívoco · Supr/doble clic = borrar)",
-                 font=("Arial", 8), fg="#757575").pack(side=tk.LEFT, padx=8)
+        tk.Label(
+            self.leyenda,
+            text="(gris = posible · verde/morado = inequívoco · Supr/doble clic = borrar)",
+            font=("Arial", 8), fg="#757575",
+        ).pack(side=tk.LEFT, padx=8)
 
         self.frame_tablero = tk.Frame(self.root, bd=2, relief=tk.SOLID)
         self.frame_tablero.pack(padx=10, pady=8)
@@ -688,7 +748,7 @@ class SudokuApp:
 
         self.estado = tk.Label(
             self.root,
-            text="Clic en un candidato pequeño para colocarlo. Los verdes/morados marcan unicidades.",
+            text="Haz clic en una casilla y usa 1-9. «Mostrar candidatos» revela los posibles.",
             font=("Arial", 11), fg=self.COLOR_ESTADO_INF,
             wraplength=680, justify=tk.LEFT, pady=6
         )
@@ -707,6 +767,35 @@ class SudokuApp:
 
     def _bg_normal(self, i, j):
         return self.COLOR_BG_PAR if (i // 3 + j // 3) % 2 == 0 else self.COLOR_BG_IMPAR
+
+    def _asegurar_candidatos_visibles(self):
+        """Activa candidatos si estaban ocultos (p. ej. al dar una pista)."""
+        if self.mostrar_candidatos:
+            return
+        self.mostrar_candidatos = True
+        self.btn_mostrar_candidatos.config(text="Ocultar candidatos")
+        self.leyenda.pack(before=self.frame_tablero)
+
+    def alternar_mostrar_candidatos(self):
+        """Activa/desactiva la visualización de candidatos en las casillas vacías."""
+        self.mostrar_candidatos = not self.mostrar_candidatos
+        if self.mostrar_candidatos:
+            self.btn_mostrar_candidatos.config(text="Ocultar candidatos")
+            self.leyenda.pack(before=self.frame_tablero)
+            self.estado.config(
+                text="Candidatos visibles: clic en un número pequeño para colocarlo "
+                     "(verde/morado = inequívoco).",
+                fg=self.COLOR_ESTADO_INF,
+            )
+        else:
+            self.btn_mostrar_candidatos.config(text="Mostrar candidatos")
+            self.leyenda.pack_forget()
+            self.estado.config(
+                text="Candidatos ocultos. Haz clic en una casilla y usa 1-9 "
+                     "(o vuelve a «Mostrar candidatos»).",
+                fg=self.COLOR_ESTADO_INF,
+            )
+        self._refrescar_candidatos()
 
     def seleccionar_celda(self, i, j):
         """Marca la casilla activa (sin usar FocusIn/Out de Tk)."""
@@ -750,8 +839,10 @@ class SudokuApp:
         try:
             tablero = self.obtener_tablero_actual()
             cands = mapa_candidatos(tablero)
-            hidden = unicos_en_zona(cands)
-            rect = buscar_rectangulo_mortal(cands)
+            hidden = unicos_en_zona(cands) if self.mostrar_candidatos else set()
+            rect = (
+                buscar_rectangulo_mortal(cands) if self.mostrar_candidatos else None
+            )
             celdas_rect = set(rect[1]) if rect else set()
             for i in range(9):
                 for j in range(9):
@@ -766,7 +857,8 @@ class SudokuApp:
                         if self.tablero_resuelto else None
                     )
                     naked_real = (
-                        len(cands[i][j]) == 1
+                        self.mostrar_candidatos
+                        and len(cands[i][j]) == 1
                         and sol is not None
                         and cands[i][j][0] == sol
                     )
@@ -782,9 +874,10 @@ class SudokuApp:
                         cands[i][j], unicos_aqui,
                         bg_extra=bg_extra, valor_solucion=sol,
                         forzar_solucion=(i, j) in celdas_rect,
+                        mostrar=self.mostrar_candidatos,
                     )
-            # Aviso + oferta de relleno si hay rectángulo mortal
-            if rect and not self._celdas_resaltadas:
+            # Aviso + oferta de relleno si hay rectángulo mortal (solo con candidatos)
+            if rect and self.mostrar_candidatos and not self._celdas_resaltadas:
                 a, b = rect[0]
                 self.estado.config(
                     text=(
@@ -982,6 +1075,7 @@ class SudokuApp:
             self.estado.config(text="Borra el número de la casilla antes de pedir una pista.", fg=self.COLOR_ESTADO_ERR)
             return
 
+        self._asegurar_candidatos_visibles()
         self._limpiar_resaltado_pista()
 
         tablero_actual = self.obtener_tablero_actual()
@@ -1084,6 +1178,7 @@ class SudokuApp:
             self.celdas[ci][cj].actualizar_candidatos(
                 cands[ci][cj], set(),
                 bg_extra="#BBDEFB", valor_solucion=sol, forzar_solucion=True,
+                mostrar=True,
             )
 
         detalles = ", ".join(
@@ -1188,7 +1283,7 @@ class SudokuApp:
 
     def _inicio_con_guardado(self):
         dif = self.dificultad.get()
-        guardado = cargar_partida(dif)
+        guardado = self._partida_retomable(dif)
         if guardado:
             resp = messagebox.askyesno(
                 "Partida guardada",
@@ -1199,14 +1294,24 @@ class SudokuApp:
                 return
         self.nuevo_juego()
 
+    def _partida_retomable(self, dificultad):
+        """Carga el JSON si es retomable; si es basura (vacío o ya resuelto), lo borra."""
+        guardado = cargar_partida(dificultad)
+        if not guardado:
+            return None
+        if guardado_es_retomable(guardado):
+            return guardado
+        eliminar_guardado(dificultad)
+        return None
+
     def _cambiar_dificultad(self, nueva_dif):
-        if self.tablero_resuelto:
+        if self.tablero_resuelto and not self._partida_terminada:
             actual = self.obtener_tablero_actual()
-            if any(actual[i][j] == 0 for i in range(9) for j in range(9)):
+            if partida_tiene_progreso(self.tablero_fijo, actual):
                 if messagebox.askyesno("Cambio de nivel",
                         f"¿Guardar la partida de «{self._dif_actual()}» antes de cambiar?"):
                     self._guardar_estado_actual()
-        guardado = cargar_partida(nueva_dif)
+        guardado = self._partida_retomable(nueva_dif)
         if guardado:
             if messagebox.askyesno("Partida guardada",
                     f"Hay una partida de nivel «{nueva_dif}» guardada.\n¿Deseas retomarla?"):
@@ -1409,6 +1514,7 @@ class SudokuApp:
                     "(Las partidas nuevas se generan con solución única; "
                     "esta pudo cargarse de antes.)"
                 )
+                self._asegurar_candidatos_visibles()
                 self._limpiar_resaltado_pista()
                 for ci, cj in celdas:
                     self.celdas[ci][cj].set_bg("#BBDEFB")
@@ -1418,6 +1524,7 @@ class SudokuApp:
                         bg_extra="#BBDEFB",
                         valor_solucion=self.tablero_resuelto[ci][cj],
                         forzar_solucion=True,
+                        mostrar=True,
                     )
                 messagebox.showinfo("Ambigüedad (rectángulo)", "\n".join(lineas))
                 return
@@ -1510,9 +1617,19 @@ class SudokuApp:
         if not self.tablero_resuelto:
             messagebox.showwarning("Sin partida", "No hay ninguna partida en curso.")
             return
+        if self._partida_terminada:
+            messagebox.showinfo("Ya completada", "La partida ya está terminada; no hay nada que guardar.")
+            return
         actual = self.obtener_tablero_actual()
-        if not any(actual[i][j] == 0 for i in range(9) for j in range(9)):
+        if partida_esta_completa(actual, self.tablero_resuelto):
             messagebox.showinfo("Ya completada", "El tablero ya está completo, no hace falta guardar.")
+            return
+        if not partida_tiene_progreso(self.tablero_fijo, actual):
+            messagebox.showinfo(
+                "Sin progreso",
+                "Aún no has colocado ningún número.\n"
+                "No se guarda una partida vacía.",
+            )
             return
         self._guardar_estado_actual()
         self._pausar_timer()
@@ -1532,7 +1649,7 @@ class SudokuApp:
 
     def retomar_partida_manual(self):
         dif = self._dif_actual()
-        guardado = cargar_partida(dif)
+        guardado = self._partida_retomable(dif)
         if not guardado:
             messagebox.showinfo("Sin guardado",
                 f"No hay ninguna partida guardada para el nivel «{dif}».")
@@ -1542,11 +1659,14 @@ class SudokuApp:
             self._cargar_estado(guardado)
 
     def salir(self):
-        if self.tablero_resuelto:
+        if self.tablero_resuelto and not self._partida_terminada:
             actual = self.obtener_tablero_actual()
-            if any(actual[i][j] == 0 for i in range(9) for j in range(9)):
-                resp = messagebox.askyesnocancel("Salir",
-                    "Hay una partida en curso.\n¿Deseas guardarla antes de salir?")
+            # Solo preguntar si hay números puestos por el jugador
+            if partida_tiene_progreso(self.tablero_fijo, actual):
+                resp = messagebox.askyesnocancel(
+                    "Salir",
+                    "Hay una partida en curso.\n¿Deseas guardarla antes de salir?",
+                )
                 if resp is None:
                     return
                 if resp:
@@ -1581,7 +1701,8 @@ class SudokuApp:
         self._refrescar_candidatos()
         self._iniciar_timer(0)
         self.estado.config(
-            text="Clic en un candidato (verde/morado = unicidad). Teclado 1-9 también sirve.",
+            text="Haz clic en una casilla y usa 1-9. "
+                 "Opcional: «Mostrar candidatos» para ver los posibles.",
             fg="black"
         )
 
