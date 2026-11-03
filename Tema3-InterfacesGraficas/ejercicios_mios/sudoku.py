@@ -4,24 +4,38 @@ import random
 import copy
 import json
 import os
+import time
+from datetime import datetime
+from itertools import combinations
 
 # ==========================================
 # RUTAS DE GUARDADO
 # ==========================================
 
 DIRECTORIO_GUARDADO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sudoku_partidas")
+RUTA_RECORDS = os.path.join(DIRECTORIO_GUARDADO, "records.json")
 
 def ruta_guardado(dificultad):
     nombre = f"partida_{dificultad.lower().replace('á','a').replace('é','e')}.json"
     return os.path.join(DIRECTORIO_GUARDADO, nombre)
 
-def guardar_partida(dificultad, tablero_resuelto, tablero_fijo, tablero_actual):
+def formatear_tiempo(segundos):
+    """Convierte segundos a texto hh:mm:ss o mm:ss."""
+    segundos = max(0, int(segundos))
+    h, resto = divmod(segundos, 3600)
+    m, s = divmod(resto, 60)
+    if h:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
+
+def guardar_partida(dificultad, tablero_resuelto, tablero_fijo, tablero_actual, segundos_juego=0):
     os.makedirs(DIRECTORIO_GUARDADO, exist_ok=True)
     datos = {
         "dificultad":       dificultad,
         "tablero_resuelto": tablero_resuelto,
         "tablero_fijo":     tablero_fijo,
         "tablero_actual":   tablero_actual,
+        "segundos_juego":   int(segundos_juego),
     }
     with open(ruta_guardado(dificultad), "w", encoding="utf-8") as f:
         json.dump(datos, f, ensure_ascii=False, indent=2)
@@ -38,6 +52,38 @@ def eliminar_guardado(dificultad):
     if os.path.exists(ruta):
         os.remove(ruta)
 
+def cargar_records():
+    if not os.path.exists(RUTA_RECORDS):
+        return {}
+    with open(RUTA_RECORDS, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def registrar_partida_terminada(dificultad, segundos):
+    """
+    Guarda el tiempo de la partida y actualiza el récord.
+    Devuelve (es_record, mejor_segundos, historial_reciente).
+    """
+    os.makedirs(DIRECTORIO_GUARDADO, exist_ok=True)
+    records = cargar_records()
+    clave = dificultad
+    entrada = records.get(clave, {"mejor": None, "partidas": []})
+    mejor_antes = entrada.get("mejor")
+    es_record = mejor_antes is None or segundos < mejor_antes
+    if es_record:
+        entrada["mejor"] = int(segundos)
+    partida = {
+        "segundos": int(segundos),
+        "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "tiempo": formatear_tiempo(segundos),
+    }
+    entrada.setdefault("partidas", []).append(partida)
+    # Conservar las 10 más recientes
+    entrada["partidas"] = entrada["partidas"][-10:]
+    records[clave] = entrada
+    with open(RUTA_RECORDS, "w", encoding="utf-8") as f:
+        json.dump(records, f, ensure_ascii=False, indent=2)
+    return es_record, entrada["mejor"], entrada["partidas"]
+
 # ==========================================
 # LÓGICA DEL SUDOKU (Backend)
 # ==========================================
@@ -53,6 +99,44 @@ def es_valido(tablero, fila, col, num):
             if tablero[caja_fila + i][caja_col + j] == num:
                 return False
     return True
+
+def candidatos_celda(tablero, fila, col):
+    """Números 1-9 que caben en (fila, col) si está vacía."""
+    if tablero[fila][col] != 0:
+        return []
+    return [n for n in range(1, 10) if es_valido(tablero, fila, col, n)]
+
+def mapa_candidatos(tablero):
+    """Matriz 9×9 con la lista de candidatos de cada celda vacía."""
+    return [[candidatos_celda(tablero, i, j) for j in range(9)] for i in range(9)]
+
+def unicos_en_zona(cands):
+    """
+    Devuelve un set de (i, j, num) donde 'num' solo cabe en esa celda
+    dentro de su fila, su columna o su caja (hidden single).
+    """
+    unicos = set()
+    for i in range(9):
+        for num in range(1, 10):
+            celdas = [(i, j) for j in range(9) if num in cands[i][j]]
+            if len(celdas) == 1:
+                unicos.add((celdas[0][0], celdas[0][1], num))
+    for j in range(9):
+        for num in range(1, 10):
+            celdas = [(i, j) for i in range(9) if num in cands[i][j]]
+            if len(celdas) == 1:
+                unicos.add((celdas[0][0], celdas[0][1], num))
+    for bi in range(3):
+        for bj in range(3):
+            for num in range(1, 10):
+                celdas = [
+                    (bi * 3 + di, bj * 3 + dj)
+                    for di in range(3) for dj in range(3)
+                    if num in cands[bi * 3 + di][bj * 3 + dj]
+                ]
+                if len(celdas) == 1:
+                    unicos.add((celdas[0][0], celdas[0][1], num))
+    return unicos
 
 def resolver_sudoku(tablero):
     for i in range(9):
@@ -74,15 +158,77 @@ def generar_tablero_resuelto():
     resolver_sudoku(tablero)
     return tablero
 
+def contar_soluciones(tablero, limite=2):
+    """Cuenta soluciones (hasta 'limite'). Usado para garantizar unicidad del puzzle."""
+    t = copy.deepcopy(tablero)
+    contador = [0]
+
+    def buscar():
+        if contador[0] >= limite:
+            return
+        for i in range(9):
+            for j in range(9):
+                if t[i][j] == 0:
+                    for num in range(1, 10):
+                        if es_valido(t, i, j, num):
+                            t[i][j] = num
+                            buscar()
+                            t[i][j] = 0
+                            if contador[0] >= limite:
+                                return
+                    return
+        contador[0] += 1
+
+    buscar()
+    return contador[0]
+
 def crear_puzzle(tablero_resuelto, dificultad):
+    """
+    Genera un puzzle con solución ÚNICA.
+    Solo elimina una celda si el tablero sigue teniendo exactamente 1 solución.
+    """
     puzzle = copy.deepcopy(tablero_resuelto)
     celdas = [(i, j) for i in range(9) for j in range(9)]
     random.shuffle(celdas)
-    borrar = {"Fácil": 35, "Medio": 45, "Difícil": 55}
-    for i in range(borrar.get(dificultad, 45)):
-        fila, col = celdas[i]
+    objetivo = {"Fácil": 35, "Medio": 45, "Difícil": 55}.get(dificultad, 45)
+    eliminadas = 0
+    for fila, col in celdas:
+        if eliminadas >= objetivo:
+            break
+        backup = puzzle[fila][col]
         puzzle[fila][col] = 0
+        if contar_soluciones(puzzle, limite=2) != 1:
+            puzzle[fila][col] = backup  # restaurar: rompería la unicidad
+        else:
+            eliminadas += 1
     return puzzle
+
+def buscar_rectangulo_mortal(cands):
+    """
+    Busca 4 casillas vacías en rectángulo (2 filas × 2 cols) con el MISMO par
+    de candidatos {a,b}. Eso permite dos rellenos (diagonales) → ambigüedad.
+    Devuelve (par_tuple, lista_4_celdas) o None.
+    """
+    por_par = {}
+    for i in range(9):
+        for j in range(9):
+            if len(cands[i][j]) == 2:
+                clave = tuple(sorted(cands[i][j]))
+                por_par.setdefault(clave, []).append((i, j))
+
+    for par, celdas in por_par.items():
+        if len(celdas) < 4:
+            continue
+        filas = sorted({i for i, _ in celdas})
+        cols = sorted({j for _, j in celdas})
+        set_celdas = set(celdas)
+        for r1, r2 in combinations(filas, 2):
+            for c1, c2 in combinations(cols, 2):
+                rect = [(r1, c1), (r1, c2), (r2, c1), (r2, c2)]
+                if all(pos in set_celdas for pos in rect):
+                    if all(tuple(sorted(cands[i][j])) == par for i, j in rect):
+                        return par, rect
+    return None
 
 def celdas_en_conflicto(tablero):
     """Devuelve el conjunto de (i,j) con valor repetido en su fila, columna o caja."""
@@ -106,6 +252,290 @@ def celdas_en_conflicto(tablero):
                         conflictos.add((i, j)); conflictos.add((ni, nj))
     return conflictos
 
+def celdas_que_bloquean(tablero, fila, col, num):
+    """Celdas de la misma fila/columna/caja que ya contienen 'num'."""
+    bloquean = []
+    for jj in range(9):
+        if jj != col and tablero[fila][jj] == num:
+            bloquean.append((fila, jj))
+    for ii in range(9):
+        if ii != fila and tablero[ii][col] == num:
+            bloquean.append((ii, col))
+    ci, cj = 3 * (fila // 3), 3 * (col // 3)
+    for di in range(3):
+        for dj in range(3):
+            ni, nj = ci + di, cj + dj
+            if (ni, nj) != (fila, col) and tablero[ni][nj] == num:
+                if (ni, nj) not in bloquean:
+                    bloquean.append((ni, nj))
+    return bloquean
+
+def analizar_bloqueo(tablero_fijo, tablero_actual, tablero_resuelto):
+    """
+    Detecta callejón sin salida y calcula undos.
+    Devuelve dict con vacias_bloqueadas, undos_minimos, undos_todos_errores.
+    Cada undo: (i, j, valor_actual, valor_correcto, motivo)
+    """
+    vacias = [
+        (i, j) for i in range(9) for j in range(9)
+        if tablero_actual[i][j] == 0
+    ]
+    vacias_bloqueadas = []
+    undos_minimos = {}  # (i,j) -> undo info
+
+    for i, j in vacias:
+        cands = candidatos_celda(tablero_actual, i, j)
+        sol = tablero_resuelto[i][j]
+        # Bloqueada si no hay candidatos o la solución ya no es legal
+        if not cands or sol not in cands:
+            vacias_bloqueadas.append((i, j, sol, cands))
+            for bi, bj in celdas_que_bloquean(tablero_actual, i, j, sol):
+                if tablero_fijo[bi][bj] != 0:
+                    continue  # no se puede deshacer un fijo
+                clave = (bi, bj)
+                if clave not in undos_minimos:
+                    undos_minimos[clave] = (
+                        bi, bj,
+                        tablero_actual[bi][bj],
+                        tablero_resuelto[bi][bj],
+                        f"bloquea el {sol} en fila {i+1}, col {j+1}",
+                    )
+
+    undos_todos = []
+    for i in range(9):
+        for j in range(9):
+            if tablero_fijo[i][j] != 0:
+                continue
+            val = tablero_actual[i][j]
+            if val != 0 and val != tablero_resuelto[i][j]:
+                undos_todos.append(
+                    (i, j, val, tablero_resuelto[i][j], "no coincide con la solución")
+                )
+
+    return {
+        "vacias": vacias,
+        "vacias_bloqueadas": vacias_bloqueadas,
+        "undos_minimos": list(undos_minimos.values()),
+        "undos_todos": undos_todos,
+    }
+
+# ==========================================
+# CELDA CON CANDIDATOS
+# ==========================================
+
+class CeldaSudoku(tk.Frame):
+    """
+    Casilla del tablero.
+    - Vacía: candidatos 1-9 en pequeño (3×3), clicables.
+    - Con valor: número grande encima (place), sin destruir/ocultar candidatos.
+    """
+
+    TAM = 58
+    FONT_VALOR = ("Arial", 20, "bold")
+    FONT_CAND = ("Arial", 7)
+    FONT_CAND_UNIC = ("Arial", 7, "bold")
+
+    COLOR_CAND_NORMAL = "#616161"
+    COLOR_CAND_NAKED = "#2E7D32"
+    COLOR_CAND_HIDDEN = "#6A1B9A"
+    COLOR_CAND_AMB = "#0277BD"   # azul: dígito correcto ante ambigüedad (2 soluciones)
+    COLOR_CAND_VACIO = "#BDBDBD"
+
+    def __init__(self, parent, app, fila, col, bg_normal):
+        super().__init__(
+            parent, width=self.TAM, height=self.TAM,
+            bg=bg_normal, highlightthickness=1,
+            highlightbackground="#9E9E9E", bd=0,
+        )
+        self.grid_propagate(False)
+        self.pack_propagate(False)
+
+        self.app = app
+        self.fila = fila
+        self.col = col
+        self.bg_normal = bg_normal
+        self._valor = 0
+        self._fijo = False
+        self._bloqueada = False
+        self._bg_actual = bg_normal
+        self._posibles = set()
+
+        # Capa inferior: candidatos (siempre montada)
+        self.frame_cands = tk.Frame(self, bg=bg_normal, bd=0, highlightthickness=0)
+        self.frame_cands.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.cand_btns = {}
+
+        for n in range(1, 10):
+            r, c = (n - 1) // 3, (n - 1) % 3
+            btn = tk.Label(
+                self.frame_cands, text="", width=2,
+                font=self.FONT_CAND, fg=self.COLOR_CAND_NORMAL,
+                bg=bg_normal, cursor="hand2",
+            )
+            btn.grid(row=r, column=c, sticky="nsew")
+            # Button-1: siempre selecciona la casilla (también en huecos vacíos)
+            btn.bind("<Button-1>", lambda e, num=n: self._pulsar_candidato(num, colocar=False))
+            btn.bind("<ButtonRelease-1>", lambda e, num=n: self._pulsar_candidato(num, colocar=True))
+            self.cand_btns[n] = btn
+
+        for r in range(3):
+            self.frame_cands.rowconfigure(r, weight=1)
+        for c in range(3):
+            self.frame_cands.columnconfigure(c, weight=1)
+
+        # Capa superior: valor (place encima; no se destruye)
+        self.lbl_valor = tk.Label(
+            self, text="", font=self.FONT_VALOR,
+            bg=bg_normal, fg=app.COLOR_FIJO,
+        )
+        # Empieza oculta (fuera / tamaño 0) — se muestra con place al tener valor
+        self.lbl_valor.place_forget()
+
+        self.bind("<Button-1>", self._seleccionar)
+        self.frame_cands.bind("<Button-1>", self._seleccionar)
+        self.lbl_valor.bind("<Button-1>", self._seleccionar)
+        self.lbl_valor.bind("<ButtonRelease-1>", self._seleccionar)
+        # Borrar número de usuario: doble clic o clic derecho
+        self.lbl_valor.bind("<Double-Button-1>", self._borrar_si_usuario)
+        self.lbl_valor.bind("<Button-3>", self._borrar_si_usuario)
+        self.bind("<Double-Button-1>", self._borrar_si_usuario)
+        self.bind("<Button-3>", self._borrar_si_usuario)
+
+    # ── API pública ───────────────────────────────────────────────────
+
+    def valor(self):
+        return self._valor
+
+    def es_fijo(self):
+        return self._fijo
+
+    def set_valor(self, valor, fijo=False, color=None):
+        self._valor = int(valor) if valor else 0
+        self._fijo = bool(fijo) and self._valor != 0
+        if self._valor == 0:
+            self.lbl_valor.place_forget()
+            self.lbl_valor.config(text="")
+            self.frame_cands.lift()
+        else:
+            fg = color if color else (
+                self.app.COLOR_FIJO if self._fijo else self.app.COLOR_USUARIO
+            )
+            self.lbl_valor.config(text=str(self._valor), fg=fg, bg=self._bg_actual)
+            self.lbl_valor.place(relx=0, rely=0, relwidth=1, relheight=1)
+            self.lbl_valor.lift()
+
+    def set_fg(self, color):
+        if self._valor != 0:
+            self.lbl_valor.config(fg=color)
+
+    def set_bg(self, color):
+        self._bg_actual = color
+        self.config(bg=color)
+        self.frame_cands.config(bg=color)
+        self.lbl_valor.config(bg=color)
+        for btn in self.cand_btns.values():
+            btn.config(bg=color)
+
+    def restaurar_bg(self):
+        self.set_bg(self.bg_normal)
+
+    def set_bloqueada(self, bloqueada):
+        self._bloqueada = bloqueada
+
+    def actualizar_candidatos(self, posibles, unicos_hidden, bg_extra=None,
+                              valor_solucion=None, forzar_solucion=False):
+        """
+        posibles: candidatos legales con el tablero actual.
+        unicos_hidden: números únicos en fila/col/caja (pueden ser falsos si hay errores).
+        valor_solucion: dígito correcto de la casilla; solo se colorea verde/morado
+                        si el candidato único coincide con él (propuesta inequívoca real).
+        forzar_solucion: True en rectángulo mortal / ambigüedad → marcar en azul
+                         el dígito de la solución guardada de la partida.
+        """
+        if self._valor != 0:
+            return
+        self._posibles = set(posibles)
+        naked = len(posibles) == 1
+        for n, btn in self.cand_btns.items():
+            if n in self._posibles:
+                es_inequivoco = (
+                    valor_solucion is not None
+                    and n == valor_solucion
+                    and (naked or n in unicos_hidden)
+                )
+                es_ambiguedad = (
+                    forzar_solucion
+                    and valor_solucion is not None
+                    and n == valor_solucion
+                    and not es_inequivoco
+                )
+                if es_inequivoco and naked:
+                    btn.config(
+                        text=str(n), fg=self.COLOR_CAND_NAKED,
+                        font=self.FONT_CAND_UNIC, cursor="hand2",
+                    )
+                elif es_inequivoco:
+                    btn.config(
+                        text=str(n), fg=self.COLOR_CAND_HIDDEN,
+                        font=self.FONT_CAND_UNIC, cursor="hand2",
+                    )
+                elif es_ambiguedad:
+                    btn.config(
+                        text=str(n), fg=self.COLOR_CAND_AMB,
+                        font=self.FONT_CAND_UNIC, cursor="hand2",
+                    )
+                else:
+                    # Varios candidatos o "único" engañoso por números mal puestos
+                    btn.config(
+                        text=str(n), fg=self.COLOR_CAND_NORMAL,
+                        font=self.FONT_CAND, cursor="hand2",
+                    )
+            else:
+                btn.config(
+                    text="", fg=self.COLOR_CAND_VACIO,
+                    font=self.FONT_CAND, cursor="arrow",
+                )
+        # Fondo verdoso solo si el naked single es el de la solución
+        if (
+            bg_extra == "#E8F5E9"
+            and not (
+                naked
+                and valor_solucion is not None
+                and posibles
+                and posibles[0] == valor_solucion
+            )
+        ):
+            bg_extra = None
+        if bg_extra is not None:
+            self.set_bg(bg_extra)
+
+    # ── Eventos ───────────────────────────────────────────────────────
+
+    def _seleccionar(self, event=None):
+        if self._bloqueada:
+            return "break"
+        self.app.seleccionar_celda(self.fila, self.col)
+        return "break"
+
+    def _borrar_si_usuario(self, event=None):
+        if self._bloqueada or self._fijo or self._valor == 0:
+            return "break"
+        self.app.seleccionar_celda(self.fila, self.col)
+        self.app.colocar_numero(self.fila, self.col, 0)
+        return "break"
+
+    def _pulsar_candidato(self, num, colocar=True):
+        """Cualquier clic en la rejilla selecciona la casilla; al soltar puede colocar."""
+        if self._bloqueada:
+            return "break"
+        self.app.seleccionar_celda(self.fila, self.col)
+        if not colocar or self._fijo or self._valor != 0:
+            return "break"
+        if num in self._posibles:
+            self.app.colocar_numero(self.fila, self.col, num)
+        return "break"
+
+
 # ==========================================
 # INTERFAZ GRÁFICA
 # ==========================================
@@ -114,17 +544,18 @@ class SudokuApp:
 
     # ── Paleta de colores ─────────────────────────────────────────────
     COLOR_FIJO          = "black"
-    COLOR_USUARIO       = "#1565C0"     # azul – número de usuario sin conflicto
-    COLOR_CONFLICTO     = "#E65100"     # naranja – número repetido
+    COLOR_USUARIO       = "#1565C0"
+    COLOR_CONFLICTO     = "#E65100"
     COLOR_ESTADO_OK     = "green"
     COLOR_ESTADO_ERR    = "red"
     COLOR_ESTADO_INF    = "#1565C0"
 
-    COLOR_BG_SELECCION  = "#FFF59D"     # amarillo – celda activa
-    COLOR_BG_PAR        = "#FFFFFF"     # blanco – bloques pares
-    COLOR_BG_IMPAR      = "#E0E0E0"     # gris – bloques impares
-    COLOR_BG_CONTEXTO   = "#DDEEFF"     # azul claro – misma fila/col/caja
-    COLOR_BG_BLOQUEANTE = "#FFE0B2"     # naranja claro – celda que bloquea un número
+    COLOR_BG_SELECCION  = "#FFF59D"
+    COLOR_BG_PAR        = "#FFFFFF"
+    COLOR_BG_IMPAR      = "#E0E0E0"
+    COLOR_BG_CONTEXTO   = "#DDEEFF"
+    COLOR_BG_BLOQUEANTE = "#FFE0B2"
+    COLOR_BG_CONFLICTO  = "#FFCDD2"   # rojo claro – celdas en conflicto / que bloquean
 
     def __init__(self, root):
         self.root = root
@@ -134,10 +565,20 @@ class SudokuApp:
         self.dificultad       = tk.StringVar(value="Medio")
         self.tablero_resuelto = []
         self.tablero_fijo     = []
-        self.entries          = [[None] * 9 for _ in range(9)]
-        self.widget_map       = {}
-        self._celdas_resaltadas        = set()   # celdas con bg de pista activa
+        self.celdas           = [[None] * 9 for _ in range(9)]
+        self._celda_focus     = None
+        self._celdas_resaltadas        = set()   # pista / bloqueos temporales
+        self._celdas_conflicto_bg      = set()   # fondo rojo de conflictos activos
         self._ultimo_aviso_conflicto   = 0
+        self._actualizando_cands       = False
+
+        # Temporizador de partida
+        self._segundos_acumulados = 0      # tiempo ya jugado (p. ej. al retomar)
+        self._inicio_tramo = None          # time.time() del tramo actual
+        self._timer_activo = False
+        self._timer_en_pausa = False       # True tras «Guardar partida»
+        self._timer_after_id = None
+        self._partida_terminada = False
 
         self.crear_interfaz()
         self.root.after(100, self._inicio_con_guardado)
@@ -147,7 +588,6 @@ class SudokuApp:
     # ------------------------------------------------------------------
 
     def crear_interfaz(self):
-        # ── Fila 1 de botones ─────────────────────────────────────────
         frame1 = tk.Frame(self.root, pady=6)
         frame1.pack()
 
@@ -164,8 +604,9 @@ class SudokuApp:
                   bg="#FF9800", fg="white", width=10).pack(side=tk.LEFT, padx=4)
         tk.Button(frame1, text="Tutorial",     command=self.mostrar_tutorial,
                   bg="#9C27B0", fg="white", width=9).pack(side=tk.LEFT, padx=4)
+        tk.Button(frame1, text="Deshacer bloqueo", command=self.deshacer_bloqueo,
+                  bg="#D32F2F", fg="white", width=14).pack(side=tk.LEFT, padx=4)
 
-        # ── Fila 2 de botones ─────────────────────────────────────────
         frame2 = tk.Frame(self.root, pady=2)
         frame2.pack()
 
@@ -175,52 +616,186 @@ class SudokuApp:
                   bg="#607D8B", fg="white", width=16).pack(side=tk.LEFT, padx=4)
         tk.Button(frame2, text="🚪  Salir",           command=self.salir,
                   bg="#F44336", fg="white", width=10).pack(side=tk.LEFT, padx=4)
+        tk.Button(frame2, text="⏱  Récords",         command=self.mostrar_records,
+                  bg="#455A64", fg="white", width=10).pack(side=tk.LEFT, padx=4)
 
-        # ── Tablero 9×9 ───────────────────────────────────────────────
+        # Temporizador visible
+        frame_timer = tk.Frame(self.root, pady=2)
+        frame_timer.pack()
+        tk.Label(frame_timer, text="Tiempo:", font=("Arial", 11)).pack(side=tk.LEFT, padx=(4, 2))
+        self.lbl_tiempo = tk.Label(
+            frame_timer, text="00:00", font=("Consolas", 14, "bold"),
+            fg="#0D47A1", width=10, anchor="w"
+        )
+        self.lbl_tiempo.pack(side=tk.LEFT)
+
+        # Leyenda de candidatos
+        leyenda = tk.Frame(self.root, pady=2)
+        leyenda.pack()
+        tk.Label(leyenda, text="Candidatos:", font=("Arial", 9)).pack(side=tk.LEFT, padx=(8, 2))
+        tk.Label(leyenda, text="● normal", fg=CeldaSudoku.COLOR_CAND_NORMAL,
+                 font=("Arial", 9)).pack(side=tk.LEFT, padx=6)
+        tk.Label(leyenda, text="● forzado (casilla)", fg=CeldaSudoku.COLOR_CAND_NAKED,
+                 font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=6)
+        tk.Label(leyenda, text="● forzado (fila/col/caja)", fg=CeldaSudoku.COLOR_CAND_HIDDEN,
+                 font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=6)
+        tk.Label(leyenda, text="● ambigüedad→solución", fg=CeldaSudoku.COLOR_CAND_AMB,
+                 font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=6)
+        tk.Label(leyenda, text="(gris = posible · verde/morado = inequívoco · Supr/doble clic = borrar)",
+                 font=("Arial", 8), fg="#757575").pack(side=tk.LEFT, padx=8)
+
         self.frame_tablero = tk.Frame(self.root, bd=2, relief=tk.SOLID)
-        self.frame_tablero.pack(padx=10, pady=10)
+        self.frame_tablero.pack(padx=10, pady=8)
 
         for i in range(9):
             for j in range(9):
                 bg = self._bg_normal(i, j)
-                entry = tk.Entry(self.frame_tablero, width=2, font=("Arial", 24),
-                                 justify="center", bg=bg, relief=tk.FLAT, bd=1)
-                entry.grid(row=i, column=j, padx=1, pady=1, ipadx=8, ipady=8)
+                celda = CeldaSudoku(self.frame_tablero, self, i, j, bg)
+                pad_x = (3, 1) if j % 3 == 0 else (1, 3) if j % 3 == 2 else (1, 1)
+                pad_y = (3, 1) if i % 3 == 0 else (1, 3) if i % 3 == 2 else (1, 1)
+                celda.grid(row=i, column=j, padx=pad_x, pady=pad_y)
+                self.celdas[i][j] = celda
 
-                vcmd = (self.root.register(self.validar_input), "%P", "%W")
-                entry.config(validate="key", validatecommand=vcmd)
-
-                entry.bind("<KeyRelease>", self._on_key_release)
-                entry.bind("<FocusIn>",    self.marcar_seleccion)
-                entry.bind("<FocusOut>",   self.desmarcar_seleccion)
-
-                self.entries[i][j] = entry
-                self.widget_map[str(entry)] = (i, j)
-
-        # ── Barra de estado ───────────────────────────────────────────
-        self.estado = tk.Label(self.root,
-                               text="Selecciona una casilla vacía y pulsa 'Pista (Ayuda)'",
-                               font=("Arial", 11), fg=self.COLOR_ESTADO_INF,
-                               wraplength=680, justify=tk.LEFT, pady=6)
+        self.estado = tk.Label(
+            self.root,
+            text="Clic en un candidato pequeño para colocarlo. Los verdes/morados marcan unicidades.",
+            font=("Arial", 11), fg=self.COLOR_ESTADO_INF,
+            wraplength=680, justify=tk.LEFT, pady=6
+        )
         self.estado.pack(padx=10)
 
+        # Teclado global (bind_all: funciona tras messagebox / clic en botones)
+        self.root.bind_all("<KeyPress>", self._tecla_global)
+        self.root.bind_all("<Delete>", self._tecla_borrar)
+        self.root.bind_all("<KP_Delete>", self._tecla_borrar)
+        self.root.bind_all("<BackSpace>", self._tecla_borrar)
         self.root.protocol("WM_DELETE_WINDOW", self.salir)
 
     # ------------------------------------------------------------------
-    # HELPERS DE COLOR
+    # HELPERS DE COLOR / ESTADO DE CELDAS
     # ------------------------------------------------------------------
 
     def _bg_normal(self, i, j):
         return self.COLOR_BG_PAR if (i // 3 + j // 3) % 2 == 0 else self.COLOR_BG_IMPAR
 
+    def seleccionar_celda(self, i, j):
+        """Marca la casilla activa (sin usar FocusIn/Out de Tk)."""
+        self._reanudar_timer_si_pausado()
+        prev = self._celda_focus
+        self._limpiar_resaltado_pista()
+        if prev and prev != (i, j):
+            self.celdas[prev[0]][prev[1]].restaurar_bg()
+        self._celda_focus = (i, j)
+        self.celdas[i][j].set_bg(self.COLOR_BG_SELECCION)
+        self._refrescar_candidatos()
+        self._actualizar_colores_conflicto()
+
+    def colocar_numero(self, i, j, num):
+        """Coloca o borra (num=0) un número de usuario y refresca candidatos."""
+        if not self.tablero_fijo:
+            return
+        if self.tablero_fijo[i][j] != 0:
+            self.estado.config(text="No puedes cambiar los números iniciales.", fg=self.COLOR_ESTADO_ERR)
+            return
+        celda = self.celdas[i][j]
+        if celda._bloqueada:
+            return
+        self._reanudar_timer_si_pausado()
+        self._limpiar_resaltado_pista()
+        self._celda_focus = (i, j)
+        celda.set_valor(num, fijo=False, color=self.COLOR_USUARIO)
+        if num != 0:
+            celda.set_bg(self.COLOR_BG_SELECCION)
+        else:
+            celda.restaurar_bg()
+            celda.set_bg(self.COLOR_BG_SELECCION)
+        self._refrescar_candidatos()
+        self._actualizar_colores_conflicto()
+        self.verificar_victoria()
+
+    def _refrescar_candidatos(self):
+        if not self.tablero_fijo or self._actualizando_cands:
+            return
+        self._actualizando_cands = True
+        try:
+            tablero = self.obtener_tablero_actual()
+            cands = mapa_candidatos(tablero)
+            hidden = unicos_en_zona(cands)
+            rect = buscar_rectangulo_mortal(cands)
+            celdas_rect = set(rect[1]) if rect else set()
+            for i in range(9):
+                for j in range(9):
+                    if tablero[i][j] != 0:
+                        continue
+                    unicos_aqui = {n for (ii, jj, n) in hidden if ii == i and jj == j}
+                    en_pista = (i, j) in self._celdas_resaltadas
+                    en_focus = self._celda_focus == (i, j)
+                    bg_extra = None
+                    sol = (
+                        self.tablero_resuelto[i][j]
+                        if self.tablero_resuelto else None
+                    )
+                    naked_real = (
+                        len(cands[i][j]) == 1
+                        and sol is not None
+                        and cands[i][j][0] == sol
+                    )
+                    if not en_pista and not en_focus:
+                        self.celdas[i][j].restaurar_bg()
+                        if naked_real:
+                            bg_extra = "#E8F5E9"
+                        elif (i, j) in celdas_rect:
+                            bg_extra = "#E3F2FD"  # azul claro: rectángulo ambiguo
+                    elif en_focus and not en_pista:
+                        bg_extra = self.COLOR_BG_SELECCION
+                    self.celdas[i][j].actualizar_candidatos(
+                        cands[i][j], unicos_aqui,
+                        bg_extra=bg_extra, valor_solucion=sol,
+                        forzar_solucion=(i, j) in celdas_rect,
+                    )
+            # Aviso breve si el foco está en el rectángulo (sin pisar pista activa)
+            if (
+                rect
+                and self._celda_focus in celdas_rect
+                and not self._celdas_resaltadas
+            ):
+                a, b = rect[0]
+                self.estado.config(
+                    text=(
+                        f"Ambigüedad {a}/{b}: 4 casillas con el mismo par "
+                        f"(rectángulo). Candidato azul = solución de esta partida. "
+                        f"Pulsa «Pista» para la explicación."
+                    ),
+                    fg=self.COLOR_ESTADO_INF,
+                )
+        finally:
+            self._actualizando_cands = False
+
     # ------------------------------------------------------------------
     # DETECCIÓN DE CONFLICTOS EN TIEMPO REAL
     # ------------------------------------------------------------------
 
-    def _on_key_release(self, event):
-        self._limpiar_resaltado_pista()
-        self.root.after(0, self._actualizar_colores_conflicto)
-        self.root.after(0, lambda: self.verificar_victoria(event))
+    def _limpiar_fondos_conflicto(self):
+        """Quita el fondo rojo de conflictos previos (respeta selección y pista)."""
+        for i, j in list(self._celdas_conflicto_bg):
+            if (i, j) in self._celdas_resaltadas:
+                continue
+            if self._celda_focus == (i, j):
+                self.celdas[i][j].set_bg(self.COLOR_BG_SELECCION)
+            else:
+                self.celdas[i][j].restaurar_bg()
+        self._celdas_conflicto_bg.clear()
+
+    def _marcar_celdas_conflicto(self, celdas, mantener_seleccion=True):
+        """Pone fondo rojo claro en las celdas indicadas."""
+        self._limpiar_fondos_conflicto()
+        for i, j in celdas:
+            if mantener_seleccion and self._celda_focus == (i, j):
+                # Selección amarilla + borde visual: prioriza rojo suave distinto
+                self.celdas[i][j].set_bg("#FFECB3")
+            else:
+                self.celdas[i][j].set_bg(self.COLOR_BG_CONFLICTO)
+            self._celdas_conflicto_bg.add((i, j))
 
     def _actualizar_colores_conflicto(self):
         if not self.tablero_fijo:
@@ -230,19 +805,26 @@ class SudokuApp:
 
         for i in range(9):
             for j in range(9):
-                entry = self.entries[i][j]
+                celda = self.celdas[i][j]
                 if self.tablero_fijo[i][j] != 0:
-                    entry.config(fg=self.COLOR_FIJO)
-                elif entry.get() != "":
+                    celda.set_fg(self.COLOR_FIJO)
+                elif celda.valor() != 0:
                     color = self.COLOR_CONFLICTO if (i, j) in en_conflicto else self.COLOR_USUARIO
-                    entry.config(fg=color)
+                    celda.set_fg(color)
+
+        # Fondo rojo en todas las celdas en conflicto (también las fijas si chocan)
+        if en_conflicto:
+            self._marcar_celdas_conflicto(en_conflicto)
+        else:
+            self._limpiar_fondos_conflicto()
 
         num_conf = len(en_conflicto)
         if num_conf != self._ultimo_aviso_conflicto:
             self._ultimo_aviso_conflicto = num_conf
             if num_conf > 0:
                 self.estado.config(
-                    text=f"⚠️  {num_conf} celda(s) en conflicto (naranja): número repetido en fila, columna o caja.",
+                    text=(f"⚠️  {num_conf} celda(s) en conflicto (fondo rojo / número naranja): "
+                          f"repetido en fila, columna o caja."),
                     fg=self.COLOR_CONFLICTO
                 )
             elif self.estado.cget("fg") == self.COLOR_CONFLICTO:
@@ -253,16 +835,21 @@ class SudokuApp:
     # ------------------------------------------------------------------
 
     def _limpiar_resaltado_pista(self):
-        """Restaura el fondo normal de todas las celdas resaltadas por la pista."""
         for i, j in self._celdas_resaltadas:
-            self.entries[i][j].config(bg=self._bg_normal(i, j))
+            if self._celda_focus == (i, j):
+                self.celdas[i][j].set_bg(self.COLOR_BG_SELECCION)
+            elif (i, j) in self._celdas_conflicto_bg:
+                self.celdas[i][j].set_bg(self.COLOR_BG_CONFLICTO)
+            else:
+                self.celdas[i][j].restaurar_bg()
         self._celdas_resaltadas.clear()
 
     def _celdas_contexto(self, i, j):
-        """Devuelve todas las celdas de la misma fila, columna y caja (sin (i,j))."""
         celdas = set()
-        for jj in range(9): celdas.add((i, jj))
-        for ii in range(9): celdas.add((ii, j))
+        for jj in range(9):
+            celdas.add((i, jj))
+        for ii in range(9):
+            celdas.add((ii, j))
         ci, cj = 3 * (i // 3), 3 * (j // 3)
         for di in range(3):
             for dj in range(3):
@@ -271,7 +858,6 @@ class SudokuApp:
         return celdas
 
     def _celda_bloqueante(self, tablero, i, j, num):
-        """Devuelve la celda (ri, ci) que impide colocar 'num' en (i, j), o None."""
         for jj in range(9):
             if jj != j and tablero[i][jj] == num:
                 return (i, jj)
@@ -287,12 +873,7 @@ class SudokuApp:
         return None
 
     def _detectar_hidden_single(self, tablero, i, j, posibles):
-        """
-        Comprueba si (i,j) es un 'hidden single' para algún número posible.
-        Devuelve (num, descripcion_zona, celdas_justificacion) o None.
-        """
         for num in posibles:
-            # ¿Es (i,j) la única celda vacía de la fila donde cabe num?
             otros_fila = [
                 (i, jj) for jj in range(9)
                 if jj != j and tablero[i][jj] == 0 and es_valido(tablero, i, jj, num)
@@ -301,7 +882,6 @@ class SudokuApp:
                 justif = [(i, jj) for jj in range(9) if jj != j and tablero[i][jj] == 0]
                 return num, f"fila {i+1}", justif
 
-            # ¿Es (i,j) la única celda vacía de la columna donde cabe num?
             otros_col = [
                 (ii, j) for ii in range(9)
                 if ii != i and tablero[ii][j] == 0 and es_valido(tablero, ii, j, num)
@@ -310,7 +890,6 @@ class SudokuApp:
                 justif = [(ii, j) for ii in range(9) if ii != i and tablero[ii][j] == 0]
                 return num, f"columna {j+1}", justif
 
-            # ¿Es (i,j) la única celda vacía de la caja donde cabe num?
             ci, cj = 3 * (i // 3), 3 * (j // 3)
             otros_caja = [
                 (ci + di, cj + dj) for di in range(3) for dj in range(3)
@@ -331,25 +910,23 @@ class SudokuApp:
     # ------------------------------------------------------------------
 
     def dar_pista(self):
-        focus_widget = self.root.focus_get()
-        if not focus_widget or str(focus_widget) not in self.widget_map:
+        if self._celda_focus is None:
             self.estado.config(text="Primero haz clic dentro de una casilla vacía.", fg=self.COLOR_ESTADO_ERR)
             return
 
-        i, j = self.widget_map[str(focus_widget)]
+        i, j = self._celda_focus
 
         if self.tablero_fijo[i][j] != 0:
             self.estado.config(text="Esta casilla ya tiene un número fijo.", fg=self.COLOR_ESTADO_ERR)
             return
-        if self.entries[i][j].get() != "":
+        if self.celdas[i][j].valor() != 0:
             self.estado.config(text="Borra el número de la casilla antes de pedir una pista.", fg=self.COLOR_ESTADO_ERR)
             return
 
-        # ── Limpiar resaltados previos ────────────────────────────────
         self._limpiar_resaltado_pista()
 
         tablero_actual = self.obtener_tablero_actual()
-        posibles = [n for n in range(1, 10) if es_valido(tablero_actual, i, j, n)]
+        posibles = candidatos_celda(tablero_actual, i, j)
 
         if not posibles:
             self.estado.config(
@@ -358,12 +935,10 @@ class SudokuApp:
             )
             return
 
-        # ── 1. Resaltar contexto (misma fila / col / caja) ───────────
         for ci, cj in self._celdas_contexto(i, j):
-            self.entries[ci][cj].config(bg=self.COLOR_BG_CONTEXTO)
+            self.celdas[ci][cj].set_bg(self.COLOR_BG_CONTEXTO)
             self._celdas_resaltadas.add((ci, cj))
 
-        # ── 2. Encontrar celdas bloqueantes para cada número excluido ─
         bloqueantes = {}
         for num in range(1, 10):
             if num not in posibles:
@@ -371,15 +946,15 @@ class SudokuApp:
                 if cb:
                     bloqueantes[num] = cb
 
-        # Resaltar celdas bloqueantes en naranja claro
         for num, (bi, bj) in bloqueantes.items():
-            self.entries[bi][bj].config(bg=self.COLOR_BG_BLOQUEANTE)
+            self.celdas[bi][bj].set_bg(self.COLOR_BG_BLOQUEANTE)
             self._celdas_resaltadas.add((bi, bj))
 
-        # ── Construir texto de exclusiones ───────────────────────────
         def zona(bi, bj):
-            if bi == i:   return f"fila {i+1} (col {bj+1})"
-            if bj == j:   return f"col {j+1} (fila {bi+1})"
+            if bi == i:
+                return f"fila {i+1} (col {bj+1})"
+            if bj == j:
+                return f"col {j+1} (fila {bi+1})"
             return f"caja ({bi+1},{bj+1})"
 
         excl_partes = [f"{n}→{zona(*cb)}" for n, cb in list(bloqueantes.items())[:5]]
@@ -387,41 +962,86 @@ class SudokuApp:
         if len(bloqueantes) > 5:
             excl_txt += "…"
 
-        # ── 3a. Número único (Naked Single) ──────────────────────────
         if len(posibles) == 1:
             num = posibles[0]
             self.estado.config(
                 text=(f"Fila {i+1}, col {j+1}: ¡Sólo puede ser {num}! "
                       f"(Naked Single)\n"
                       f"Los demás están bloqueados: {excl_txt}\n"
-                      f"🔵 Azul = contexto  |  🟠 Naranja = celda bloqueante"),
+                      f"🔵 Azul = contexto  |  🟠 Naranja = celda bloqueante  |  🟢 candidato único"),
                 fg=self.COLOR_ESTADO_OK
             )
             return
 
-        # ── 3b. Número oculto (Hidden Single) ────────────────────────
         hs = self._detectar_hidden_single(tablero_actual, i, j, posibles)
         if hs:
             num, zona_hs, justif_celdas = hs
-            # Resaltar las celdas de la zona que NO pueden tener este número (en naranja)
             for ci, cj in justif_celdas:
-                self.entries[ci][cj].config(bg=self.COLOR_BG_BLOQUEANTE)
+                self.celdas[ci][cj].set_bg(self.COLOR_BG_BLOQUEANTE)
                 self._celdas_resaltadas.add((ci, cj))
             self.estado.config(
                 text=(f"Fila {i+1}, col {j+1}: Debe ser {num} (Hidden Single)\n"
                       f"Es el único lugar de la {zona_hs} donde cabe el {num}.\n"
-                      f"🟠 Naranja = otras celdas vacías de la zona que no admiten {num}"),
+                      f"🟣 candidato morado = único en fila/col/caja"),
                 fg=self.COLOR_ESTADO_OK
             )
             return
 
-        # ── 3c. Varios candidatos ────────────────────────────────────
+        # Rectángulo mortal: 4 casillas con el mismo par → 2 diagonales posibles
+        if self._explicar_rectangulo_si_aplica(tablero_actual, i, j):
+            return
+
         self.estado.config(
             text=(f"Fila {i+1}, col {j+1}: posibles → {', '.join(map(str, posibles))}\n"
                   f"Bloqueados: {excl_txt}\n"
-                  f"🔵 Azul = contexto  |  🟠 Naranja = celdas que bloquean números"),
+                  f"Clic en un candidato pequeño para colocarlo."),
             fg=self.COLOR_ESTADO_INF
         )
+
+    def _explicar_rectangulo_si_aplica(self, tablero_actual, i, j):
+        """
+        Si (i,j) forma parte de un rectángulo con el mismo par de candidatos,
+        resalta las 4 casillas, marca en azul la diagonal de la solución
+        y explica por qué la lógica pura no elige.
+        """
+        if not self.tablero_resuelto:
+            return False
+        cands = mapa_candidatos(tablero_actual)
+        hallado = buscar_rectangulo_mortal(cands)
+        if not hallado:
+            return False
+        par, rect = hallado
+        if (i, j) not in rect:
+            # Si hay rectángulo en el tablero pero el foco no está en él, aún así
+            # informar si no hay otra pista fuerte (caller ya agotó singles).
+            # Solo actuar cuando el foco pertenece al rectángulo.
+            return False
+
+        a, b = par
+        for ci, cj in rect:
+            self.celdas[ci][cj].set_bg("#BBDEFB")
+            self._celdas_resaltadas.add((ci, cj))
+            sol = self.tablero_resuelto[ci][cj]
+            self.celdas[ci][cj].actualizar_candidatos(
+                cands[ci][cj], set(),
+                bg_extra="#BBDEFB", valor_solucion=sol, forzar_solucion=True,
+            )
+
+        detalles = ", ".join(
+            f"f{ci+1}c{cj+1}→{self.tablero_resuelto[ci][cj]}"
+            for ci, cj in rect
+        )
+        self.estado.config(
+            text=(
+                f"Rectángulo mortal {{{a},{b}}}: 4 casillas con el mismo par.\n"
+                f"La lógica solo ve 2 rellenos válidos (las dos diagonales); "
+                f"ningún candidato es forzado.\n"
+                f"En ESTA partida elige el azul: {detalles}. "
+                f"(Partidas nuevas ya se generan con solución única.)"
+            ),
+            fg=self.COLOR_ESTADO_INF,
+        )
+        return True
 
     # ------------------------------------------------------------------
     # TUTORIAL
@@ -440,7 +1060,6 @@ class SudokuApp:
         )
         txt.pack(fill=tk.BOTH, expand=True)
 
-        # Definir estilos
         txt.tag_config("titulo",  font=("Arial", 14, "bold"), foreground="#1A237E", spacing3=6)
         txt.tag_config("h2",      font=("Arial", 12, "bold"), foreground="#0D47A1", spacing1=8, spacing3=4)
         txt.tag_config("h3",      font=("Arial", 11, "bold"), foreground="#1565C0", spacing1=4)
@@ -449,17 +1068,13 @@ class SudokuApp:
                        lmargin1=20, lmargin2=20, spacing1=2, spacing3=2)
         txt.tag_config("tip",     font=("Arial", 11, "italic"), foreground="#2E7D32")
         txt.tag_config("warn",    font=("Arial", 11, "bold"),   foreground="#E65100")
-        txt.tag_config("legend",  font=("Arial", 10), foreground="#555555")
         txt.tag_config("hr",      foreground="#BDBDBD")
 
         def ln(text="", tag="body"):
             txt.insert(tk.END, text + "\n", tag)
 
-        # ── Título ────────────────────────────────────────────────────
         ln("🎯  CÓMO RESOLVER UN SUDOKU", "titulo")
         ln("─" * 62, "hr")
-
-        # ── Reglas ───────────────────────────────────────────────────
         ln()
         ln("📋  REGLAS BÁSICAS", "h2")
         ln("El tablero es una cuadrícula de 9×9 casillas dividida en", "body")
@@ -469,108 +1084,40 @@ class SudokuApp:
         ln("  ✔  Cada COLUMNA   → los 9 dígitos, sin repetir", "body")
         ln("  ✔  Cada BLOQUE    → los 9 dígitos, sin repetir", "body")
         ln()
-        ln("Ejemplo de tablero (· = casilla vacía):", "body")
+        ln("─" * 62, "hr")
         ln()
-        ln("  ┌───────┬───────┬───────┐", "code")
-        ln("  │ 5 3 · │ · 7 · │ · · · │", "code")
-        ln("  │ 6 · · │ 1 9 5 │ · · · │", "code")
-        ln("  │ · 9 8 │ · · · │ · 6 · │", "code")
-        ln("  ├───────┼───────┼───────┤", "code")
-        ln("  │ 8 · · │ · 6 · │ · · 3 │", "code")
-        ln("  │ 4 · · │ 8 · 3 │ · · 1 │", "code")
-        ln("  │ 7 · · │ · 2 · │ · · 6 │", "code")
-        ln("  ├───────┼───────┼───────┤", "code")
-        ln("  │ · 6 · │ · · · │ 2 8 · │", "code")
-        ln("  │ · · · │ 4 1 9 │ · · 5 │", "code")
-        ln("  │ · · · │ · 8 · │ · 7 9 │", "code")
-        ln("  └───────┴───────┴───────┘", "code")
+        ln("✏️  CANDIDATOS EN CADA CASILLA", "h2")
+        ln("En las casillas vacías verás en pequeño los números posibles.", "body")
+        ln("Haz clic en uno para colocarlo. Supr / Backspace lo borra.", "body")
+        ln()
+        ln("  Gris/negro  → candidato normal", "body")
+        ln("  Verde       → único candidato de esa casilla (Naked Single)", "tip")
+        ln("  Morado      → único lugar de la fila/columna/caja (Hidden Single)", "tip")
+        ln()
+        ln("Así ves de un vistazo dónde solo cabe un número.", "body")
         ln()
         ln("─" * 62, "hr")
-
-        # ── Estrategia 1: Naked Single ────────────────────────────────
         ln()
-        ln("🔧  ESTRATEGIA 1 — NAKED SINGLE (número único)", "h2")
-        ln("Si en una casilla solo cabe UN número (los otros 8 ya están", "body")
-        ln("en su fila, columna o bloque), ese número es la respuesta.", "body")
+        ln("🔧  NAKED SINGLE (número único)", "h2")
+        ln("Si en una casilla solo cabe UN número, ese es la respuesta.", "body")
+        ln("Aparece en verde y con fondo verdoso.", "tip")
         ln()
-        ln("Ejemplo — Fila 1, Columna 3:", "h3")
-        ln()
-        ln("  Fila:   5  3  ·  ·  7  ·  ·  ·  ·", "code")
-        ln("               ↑", "code")
-        ln("  Ya hay: 5, 3, 7 en la fila", "code")
-        ln("  Col 3 : 8, ·, ·, ·, 9, ·, ·, ·  → excluye: 8, 9", "code")
-        ln("  Bloque : 5, 3, ·, 6, ·, ·, ·, 9, 8 → excluye: 6, 8, 9", "code")
-        ln("  ─────────────────────────────────────────────────────────", "code")
-        ln("  Números posibles: solo el  4  ← ¡esa es la respuesta!", "code")
-        ln()
-        ln("  💡 'Pista' detecta esto y te indica el número exacto.", "tip")
+        ln("🔧  HIDDEN SINGLE (número oculto)", "h2")
+        ln("Si un número solo puede ir en una casilla de su fila,", "body")
+        ln("columna o caja, aparece en morado aunque haya más candidatos.", "body")
         ln()
         ln("─" * 62, "hr")
-
-        # ── Estrategia 2: Hidden Single ───────────────────────────────
         ln()
-        ln("🔧  ESTRATEGIA 2 — HIDDEN SINGLE (número oculto)", "h2")
-        ln("Un número puede ir en varias casillas de una fila, pero si", "body")
-        ln("todas las demás celdas vacías de esa fila/columna/bloque", "body")
-        ln("lo descartan, esa casilla es la única opción.", "body")
-        ln()
-        ln("Ejemplo — ¿Dónde va el 7 en la fila 1?", "h3")
-        ln()
-        ln("  Fila 1:  5  3  4  ·  ·  ·  ·  ·  ·", "code")
-        ln("                    a  b  c  d  e  f   ← vacías", "code")
-        ln("  El 7 está en col 5 (bloquea b) y col 8 (bloquea e)", "code")
-        ln("  El 7 está en bloque superior-derecho (bloquea d,e,f)", "code")
-        ln("  ─────────────────────────────────────────────────────────", "code")
-        ln("  Solo la casilla  a  (col 4) puede alojar el 7", "code")
-        ln()
-        ln("  💡 'Pista' marca en naranja las casillas que descartan", "tip")
-        ln("  el número, dejando claro cuál es la elegida.", "tip")
-        ln()
-        ln("─" * 62, "hr")
-
-        # ── Estrategia 3: Escaneo ─────────────────────────────────────
-        ln()
-        ln("🔧  ESTRATEGIA 3 — ESCANEO CRUZADO DE FILAS/COLUMNAS", "h2")
-        ln("Para colocar un número en un bloque 3×3:", "body")
-        ln("1. Mira en qué filas del bloque ya aparece ese número", "body")
-        ln("   (en otras columnas) → esas filas quedan descartadas.", "body")
-        ln("2. Haz lo mismo con las columnas.", "body")
-        ln("3. Si solo queda una celda libre en la intersección, ahí va.", "body")
-        ln()
-        ln("Ejemplo — Colocar el 2 en el bloque central:", "h3")
-        ln()
-        ln("  El 2 aparece en fila 4 (otro bloque) → fila 4 descartada", "code")
-        ln("  El 2 aparece en col 6 (otro bloque)  → col 6 descartada", "code")
-        ln("  Solo queda fila 5, col 4 → ¡ese es el lugar del 2!", "code")
-        ln()
-        ln("─" * 62, "hr")
-
-        # ── Leyenda de colores ────────────────────────────────────────
-        ln()
-        ln("🎨  LEYENDA DE COLORES DE ESTA APLICACIÓN", "h2")
-        ln()
+        ln("🎨  LEYENDA DE COLORES", "h2")
         ln("  Negro       → número dado por el puzzle (fijo)", "body")
         ln("  Azul        → número introducido por ti, sin conflicto", "body")
-        ln("  Naranja     → ¡CONFLICTO! ese número ya existe en", "body")
-        ln("                su fila, columna o caja", "warn")
+        ln("  Naranja     → ¡CONFLICTO! número repetido", "warn")
         ln()
         ln("  Al pulsar 'Pista (Ayuda)':", "body")
-        ln("  Fondo azul claro  → celdas de la misma fila/col/caja", "body")
-        ln("  Fondo naranja     → celda que bloquea un número candidato", "body")
+        ln("  Fondo azul claro  → misma fila/col/caja", "body")
+        ln("  Fondo naranja     → celda que bloquea un candidato", "body")
         ln()
-        ln("─" * 62, "hr")
-
-        # ── Consejos ──────────────────────────────────────────────────
-        ln()
-        ln("💡  CONSEJOS GENERALES", "h2")
-        ln("  • Empieza por las casillas con más restricciones", "body")
-        ln("    (filas/columnas/cajas casi completas).", "body")
-        ln("  • Anota lápiz los candidatos posibles en cada celda.", "body")
-        ln("  • Cuando coloques un número, revisa si resuelve más celdas", "body")
-        ln("    en la misma fila, columna o bloque.", "body")
-        ln("  • Usa 'Comprobar' para saber si vas bien.", "body")
-        ln("  • ¡Usa 'Pista' sin miedo: te explica el razonamiento!", "tip")
-        ln()
+        ln("💡  Usa 'Pista' para ver el razonamiento paso a paso.", "tip")
 
         txt.config(state=tk.DISABLED)
         tk.Button(win, text="  Cerrar  ", command=win.destroy,
@@ -611,9 +1158,81 @@ class SudokuApp:
     def _dif_actual(self):
         return self.dificultad.get()
 
+    # ------------------------------------------------------------------
+    # TEMPORIZADOR
+    # ------------------------------------------------------------------
+
+    def _segundos_actuales(self):
+        total = self._segundos_acumulados
+        if self._timer_activo and self._inicio_tramo is not None:
+            total += time.time() - self._inicio_tramo
+        return total
+
+    def _actualizar_lbl_tiempo(self):
+        self.lbl_tiempo.config(text=formatear_tiempo(self._segundos_actuales()))
+
+    def _tick_timer(self):
+        if not self._timer_activo:
+            return
+        self._actualizar_lbl_tiempo()
+        self._timer_after_id = self.root.after(250, self._tick_timer)
+
+    def _iniciar_timer(self, segundos_previos=0):
+        self._detener_timer(guardar_acumulado=False)
+        self._segundos_acumulados = int(segundos_previos)
+        self._inicio_tramo = time.time()
+        self._timer_activo = True
+        self._timer_en_pausa = False
+        self._partida_terminada = False
+        self.lbl_tiempo.config(fg="#0D47A1")
+        self._actualizar_lbl_tiempo()
+        self._tick_timer()
+
+    def _detener_timer(self, guardar_acumulado=True):
+        if self._timer_after_id is not None:
+            try:
+                self.root.after_cancel(self._timer_after_id)
+            except tk.TclError:
+                pass
+            self._timer_after_id = None
+        if guardar_acumulado and self._timer_activo and self._inicio_tramo is not None:
+            self._segundos_acumulados += time.time() - self._inicio_tramo
+        self._inicio_tramo = None
+        self._timer_activo = False
+        self._actualizar_lbl_tiempo()
+
+    def _pausar_timer(self):
+        """Para el cronómetro (p. ej. al guardar) sin perder el tiempo acumulado."""
+        self._detener_timer(guardar_acumulado=True)
+        self._timer_en_pausa = True
+        self.lbl_tiempo.config(
+            text=formatear_tiempo(self._segundos_acumulados) + " ⏸",
+            fg="#EF6C00",
+        )
+
+    def _reanudar_timer_si_pausado(self):
+        """Reanuda tras guardar, al volver a interactuar con el tablero."""
+        if self._partida_terminada or not self._timer_en_pausa:
+            return
+        if self._timer_activo:
+            return
+        self._inicio_tramo = time.time()
+        self._timer_activo = True
+        self._timer_en_pausa = False
+        self.lbl_tiempo.config(fg="#0D47A1")
+        self._actualizar_lbl_tiempo()
+        self._tick_timer()
+
     def _guardar_estado_actual(self):
-        guardar_partida(self._dif_actual(), self.tablero_resuelto,
-                        self.tablero_fijo, self.obtener_tablero_actual())
+        # Congela el tramo actual en acumulado antes de guardar
+        if self._timer_activo and self._inicio_tramo is not None:
+            self._segundos_acumulados += time.time() - self._inicio_tramo
+            self._inicio_tramo = time.time()
+        guardar_partida(
+            self._dif_actual(), self.tablero_resuelto,
+            self.tablero_fijo, self.obtener_tablero_actual(),
+            segundos_juego=int(self._segundos_acumulados),
+        )
 
     def _cargar_estado(self, datos):
         self.tablero_resuelto = datos["tablero_resuelto"]
@@ -624,21 +1243,178 @@ class SudokuApp:
 
         for i in range(9):
             for j in range(9):
-                self.entries[i][j].config(state=tk.NORMAL)
+                self.celdas[i][j].set_bloqueada(False)
 
         for i in range(9):
             for j in range(9):
-                entry = self.entries[i][j]
-                entry.delete(0, tk.END)
                 val = tablero_actual[i][j]
+                fijo = self.tablero_fijo[i][j] != 0
                 if val != 0:
-                    entry.insert(0, str(val))
-                    entry.config(fg=self.COLOR_FIJO if self.tablero_fijo[i][j] != 0 else self.COLOR_USUARIO)
+                    self.celdas[i][j].set_valor(
+                        val, fijo=fijo,
+                        color=self.COLOR_FIJO if fijo else self.COLOR_USUARIO
+                    )
+                else:
+                    self.celdas[i][j].set_valor(0)
 
         self._actualizar_colores_conflicto()
+        self._refrescar_candidatos()
+        previos = int(datos.get("segundos_juego", 0))
+        self._iniciar_timer(previos)
         self.estado.config(
-            text=f"Partida «{datos['dificultad']}» retomada. ¡A seguir!",
+            text=(f"Partida «{datos['dificultad']}» retomada "
+                  f"(tiempo previo {formatear_tiempo(previos)}). ¡A seguir!"),
             fg=self.COLOR_ESTADO_OK
+        )
+
+    def mostrar_records(self):
+        records = cargar_records()
+        lineas = ["Récords y últimas partidas\n" + "─" * 40]
+        for dif in ("Fácil", "Medio", "Difícil"):
+            datos = records.get(dif)
+            lineas.append(f"\n▶ {dif}")
+            if not datos or not datos.get("partidas"):
+                lineas.append("  (aún no hay partidas terminadas)")
+                continue
+            mejor = datos.get("mejor")
+            lineas.append(f"  Mejor marca: {formatear_tiempo(mejor)}")
+            lineas.append("  Últimas:")
+            for p in reversed(datos["partidas"][-5:]):
+                lineas.append(f"    · {p['fecha']}  →  {p['tiempo']}")
+        messagebox.showinfo("Récords", "\n".join(lineas))
+
+    def deshacer_bloqueo(self):
+        """
+        Analiza callejones sin salida (casillas vacías sin candidatos o
+        sin la solución entre ellos) y propone/aplica UNDO de casillas
+        de usuario incorrectas.
+        """
+        if not self.tablero_resuelto or not self.tablero_fijo:
+            messagebox.showinfo("Sin partida", "No hay partida en curso.")
+            return
+        if self._partida_terminada:
+            return
+
+        actual = self.obtener_tablero_actual()
+        analisis = analizar_bloqueo(self.tablero_fijo, actual, self.tablero_resuelto)
+        vacias_bloq = analisis["vacias_bloqueadas"]
+        undos_min = analisis["undos_minimos"]
+        undos_todos = analisis["undos_todos"]
+
+        if not vacias_bloq and not undos_todos:
+            cands = mapa_candidatos(actual)
+            rect = buscar_rectangulo_mortal(cands)
+            if rect and self.tablero_resuelto:
+                par, celdas = rect
+                a, b = par
+                lineas = [
+                    f"No hay números incorrectos, pero hay ambigüedad {{{a},{b}}}:",
+                    "4 casillas forman un rectángulo con el mismo par de candidatos.",
+                    "Eso admite dos rellenos (diagonales); la lógica sola no elige.",
+                    "",
+                    "En esta partida usa el candidato AZUL (solución guardada):",
+                ]
+                for ci, cj in celdas:
+                    lineas.append(
+                        f"  · fila {ci+1}, col {cj+1} → "
+                        f"{self.tablero_resuelto[ci][cj]}"
+                    )
+                lineas.append("")
+                lineas.append(
+                    "(Las partidas nuevas se generan con solución única; "
+                    "esta pudo cargarse de antes.)"
+                )
+                self._limpiar_resaltado_pista()
+                for ci, cj in celdas:
+                    self.celdas[ci][cj].set_bg("#BBDEFB")
+                    self._celdas_resaltadas.add((ci, cj))
+                    self.celdas[ci][cj].actualizar_candidatos(
+                        cands[ci][cj], set(),
+                        bg_extra="#BBDEFB",
+                        valor_solucion=self.tablero_resuelto[ci][cj],
+                        forzar_solucion=True,
+                    )
+                messagebox.showinfo("Ambigüedad (rectángulo)", "\n".join(lineas))
+                return
+            messagebox.showinfo(
+                "Sin bloqueo",
+                "No hay callejón sin salida ni números de usuario incorrectos.\n"
+                "Puedes seguir con los candidatos (verde/morado = inequívoco)."
+            )
+            return
+
+        lineas = [
+            "Se llegó a un bloqueo porque se colocaron números",
+            "que NO eran inequívocos (solo gris = posible, no forzado).",
+            "",
+            "Regla: prioriza siempre verde/morado; el gris puede equivocarte.",
+            "",
+        ]
+
+        if vacias_bloq:
+            lineas.append("Casillas vacías bloqueadas (0 candidatos útiles):")
+            for i, j, sol, cands in vacias_bloq:
+                lineas.append(
+                    f"  · fila {i+1}, col {j+1}: candidatos={cands or '∅'} "
+                    f"(necesita {sol})"
+                )
+            lineas.append("")
+
+        if undos_min:
+            lineas.append("UNDO MÍNIMO para desbloquear esas casillas:")
+            for n, (i, j, actual_v, correcto, motivo) in enumerate(undos_min, 1):
+                lineas.append(
+                    f"  {n}. Supr en fila {i+1}, col {j+1}: "
+                    f"quitar {actual_v} → luego irá {correcto}"
+                )
+                lineas.append(f"      ({motivo})")
+            lineas.append("")
+
+        if undos_todos:
+            lineas.append("UNDO COMPLETO (todas las de usuario incorrectas):")
+            for n, (i, j, actual_v, correcto, _) in enumerate(undos_todos, 1):
+                lineas.append(
+                    f"  {n}. Supr fila {i+1}, col {j+1}: quitar {actual_v} "
+                    f"(correcto {correcto})"
+                )
+
+        # Marcar en tablero los undos mínimos (o todos si no hay mínimos)
+        marcar = undos_min if undos_min else undos_todos
+        self._limpiar_resaltado_pista()
+        self._marcar_celdas_conflicto([(i, j) for i, j, *_ in marcar])
+        for i, j, *_ in marcar:
+            self._celdas_resaltadas.add((i, j))
+
+        texto = "\n".join(lineas)
+        aplicar = messagebox.askyesno(
+            "Deshacer bloqueo",
+            texto + "\n\n¿Aplicar ahora el UNDO mínimo "
+            "(borrar solo las casillas en rojo que bloquean)?"
+            if undos_min else
+            texto + "\n\n¿Borrar ahora TODAS las casillas incorrectas (en rojo)?"
+        )
+        if not aplicar:
+            self.estado.config(
+                text="UNDO mostrado (rojo). Bórralas con Supr o vuelve a pulsar Deshacer bloqueo.",
+                fg=self.COLOR_ESTADO_ERR,
+            )
+            return
+
+        lista = undos_min if undos_min else undos_todos
+        for i, j, *_ in lista:
+            self.colocar_numero(i, j, 0)
+        self._limpiar_resaltado_pista()
+        self._limpiar_fondos_conflicto()
+        self._refrescar_candidatos()
+        self._actualizar_colores_conflicto()
+        self.estado.config(
+            text=f"Aplicados {len(lista)} UNDO. Revisa candidatos verdes/morados y continúa.",
+            fg=self.COLOR_ESTADO_OK,
+        )
+        messagebox.showinfo(
+            "UNDO aplicado",
+            f"Se han borrado {len(lista)} casilla(s).\n"
+            f"Ahora coloca solo candidatos verdes/morados (inequívocos)."
         )
 
     # ------------------------------------------------------------------
@@ -654,10 +1430,20 @@ class SudokuApp:
             messagebox.showinfo("Ya completada", "El tablero ya está completo, no hace falta guardar.")
             return
         self._guardar_estado_actual()
+        self._pausar_timer()
         dif = self._dif_actual()
-        self.estado.config(text=f"Partida «{dif}» guardada correctamente.", fg=self.COLOR_ESTADO_OK)
-        messagebox.showinfo("Guardado",
-            f"La partida de nivel «{dif}» se ha guardado.\nPuedes retomarla más adelante.")
+        t = formatear_tiempo(self._segundos_acumulados)
+        self.estado.config(
+            text=f"Partida «{dif}» guardada. Cronómetro en pausa ({t}). Clic en una casilla para continuar.",
+            fg=self.COLOR_ESTADO_OK,
+        )
+        messagebox.showinfo(
+            "Guardado",
+            f"La partida de nivel «{dif}» se ha guardado.\n"
+            f"Tiempo acumulado: {t}\n"
+            f"El cronómetro está en pausa.\n\n"
+            f"Al retomar o al hacer clic en el tablero, seguirá contando."
+        )
 
     def retomar_partida_manual(self):
         dif = self._dif_actual()
@@ -686,22 +1472,6 @@ class SudokuApp:
     # LÓGICA DE JUEGO
     # ------------------------------------------------------------------
 
-    def validar_input(self, P, widget_nombre):
-        if P == "":
-            self.root.after(0, self._actualizar_colores_conflicto)
-            return True
-        # len(P)==1 evita que "89" (subcadena de "123456789") pase el filtro
-        if len(P) == 1 and P in "123456789":
-            i, j = self.widget_map[widget_nombre]
-            if self.tablero_fijo[i][j] != 0:
-                self.entries[i][j].delete(0, tk.END)
-                self.entries[i][j].insert(0, str(self.tablero_fijo[i][j]))
-                self.estado.config(text="No puedes cambiar los números iniciales.", fg=self.COLOR_ESTADO_ERR)
-                return False
-            self.root.after(0, self._actualizar_colores_conflicto)
-            return True
-        return False
-
     def nuevo_juego(self):
         dif = self.dificultad.get()
         self.estado.config(text=f"Generando tablero {dif}...", fg="black")
@@ -712,58 +1482,74 @@ class SudokuApp:
         self.tablero_fijo = copy.deepcopy(puzzle)
         self._limpiar_resaltado_pista()
         self._ultimo_aviso_conflicto = 0
+        self._celda_focus = None
 
         eliminar_guardado(dif)
 
         for i in range(9):
             for j in range(9):
-                self.entries[i][j].config(state=tk.NORMAL)
+                self.celdas[i][j].set_bloqueada(False)
+                self.celdas[i][j].restaurar_bg()
 
         self.actualizar_tablero_gui(puzzle)
-        self.estado.config(text="¡Buena suerte! Haz clic en una casilla vacía y pulsa 'Pista (Ayuda)'.",
-                           fg="black")
+        self._refrescar_candidatos()
+        self._iniciar_timer(0)
+        self.estado.config(
+            text="Clic en un candidato (verde/morado = unicidad). Teclado 1-9 también sirve.",
+            fg="black"
+        )
 
     def actualizar_tablero_gui(self, tablero):
         for i in range(9):
             for j in range(9):
-                entry = self.entries[i][j]
-                entry.delete(0, tk.END)
-                if tablero[i][j] != 0:
-                    entry.insert(0, str(tablero[i][j]))
-                    entry.config(fg=self.COLOR_FIJO)
+                val = tablero[i][j]
+                if val != 0:
+                    self.celdas[i][j].set_valor(val, fijo=True, color=self.COLOR_FIJO)
                 else:
-                    entry.config(fg=self.COLOR_USUARIO)
+                    self.celdas[i][j].set_valor(0)
 
     def obtener_tablero_actual(self):
-        """Devuelve el estado actual del tablero como matriz 9×9 (0 = vacío)."""
-        return [
-            [int(self.entries[i][j].get()) if self.entries[i][j].get() != "" else 0
-             for j in range(9)]
-            for i in range(9)
-        ]
+        return [[self.celdas[i][j].valor() for j in range(9)] for i in range(9)]
 
     def comprobar_tablero(self):
         tablero_actual = self.obtener_tablero_actual()
 
         en_conflicto = celdas_en_conflicto(tablero_actual)
         if en_conflicto:
-            messagebox.showwarning("Conflictos detectados",
+            self._actualizar_colores_conflicto()
+            ci, cj = next(iter(en_conflicto))
+            self.seleccionar_celda(ci, cj)
+            self._actualizar_colores_conflicto()
+            messagebox.showwarning(
+                "Conflictos detectados",
                 f"Hay {len(en_conflicto)} celda(s) con números repetidos "
-                f"(marcadas en naranja).\nCorrige los conflictos antes de comprobar.")
+                f"(fondo rojo / número naranja).\n\n"
+                f"Haz clic en una casilla en conflicto y pulsa Supr "
+                f"(o doble clic / clic derecho) para borrarla."
+            )
+            self.root.focus_force()
             return
 
         vacias = [(i, j) for i in range(9) for j in range(9) if tablero_actual[i][j] == 0]
         if vacias:
+            vi, vj = vacias[0]
+            self.seleccionar_celda(vi, vj)
             self.estado.config(
-                text=f"Tablero incompleto: quedan {len(vacias)} casillas vacías.",
+                text=(f"Tablero incompleto: quedan {len(vacias)} casillas vacías. "
+                      f"Seleccionada fila {vi+1}, col {vj+1} — escribe un dígito o haz clic en un candidato."),
                 fg="darkorange"
             )
-            messagebox.showwarning("Tablero incompleto",
-                f"Todavía quedan {len(vacias)} casillas sin rellenar.\n¡Sigue intentándolo!")
+            messagebox.showwarning(
+                "Tablero incompleto",
+                f"Todavía quedan {len(vacias)} casillas sin rellenar.\n\n"
+                f"Se ha seleccionado la primera vacía (fila {vi+1}, col {vj+1}).\n"
+                f"Escribe un número 1-9 o haz clic en un candidato pequeño."
+            )
+            self.root.focus_force()
             return
 
         errores = [
-            (i + 1, j + 1)
+            (i, j)
             for i in range(9) for j in range(9)
             if tablero_actual[i][j] != self.tablero_resuelto[i][j]
         ]
@@ -771,41 +1557,154 @@ class SudokuApp:
             for i in range(9):
                 for j in range(9):
                     if self.tablero_fijo[i][j] == 0:
-                        color = self.COLOR_ESTADO_ERR if tablero_actual[i][j] != self.tablero_resuelto[i][j] else self.COLOR_USUARIO
-                        self.entries[i][j].config(fg=color)
+                        color = (
+                            self.COLOR_ESTADO_ERR
+                            if tablero_actual[i][j] != self.tablero_resuelto[i][j]
+                            else self.COLOR_USUARIO
+                        )
+                        self.celdas[i][j].set_fg(color)
+            # Selecciona el primer error para poder borrar enseguida con Supr
+            ei, ej = errores[0]
+            self.seleccionar_celda(ei, ej)
             self.estado.config(
-                text=f"Hay {len(errores)} error(es). Las celdas incorrectas aparecen en rojo.",
+                text=(f"Hay {len(errores)} error(es) en rojo. "
+                      f"Casilla seleccionada: fila {ei+1}, col {ej+1}. "
+                      f"Supr / doble clic / clic derecho para borrar."),
                 fg=self.COLOR_ESTADO_ERR
             )
-            messagebox.showerror("Solución incorrecta",
-                f"Hay {len(errores)} celda(s) con errores (marcadas en rojo).\n¡Inténtalo de nuevo!")
+            messagebox.showerror(
+                "Solución incorrecta",
+                f"Hay {len(errores)} celda(s) incorrectas (en rojo).\n\n"
+                f"Para corregir:\n"
+                f"1. Haz clic en una casilla roja\n"
+                f"2. Pulsa Supr o Backspace (o doble clic / clic derecho)\n"
+                f"3. Elige de nuevo entre los candidatos"
+            )
+            self.root.focus_force()
         else:
             self._marcar_victoria()
 
-    def marcar_seleccion(self, event):
-        self._limpiar_resaltado_pista()
-        event.widget.config(bg=self.COLOR_BG_SELECCION)
+    def _tecla_borrar(self, event=None):
+        if self._celda_focus is None or not self.tablero_fijo:
+            return
+        if self._partida_terminada:
+            return
+        i, j = self._celda_focus
+        celda = self.celdas[i][j]
+        if celda._bloqueada or celda.es_fijo():
+            return
+        if celda.valor() != 0:
+            self.colocar_numero(i, j, 0)
 
-    def desmarcar_seleccion(self, event):
-        i, j = self.widget_map[str(event.widget)]
-        event.widget.config(bg=self._bg_normal(i, j))
+    def _tecla_global(self, event):
+        if self._partida_terminada or not self.tablero_fijo:
+            return
+        if event.keysym in ("BackSpace", "Delete", "KP_Delete"):
+            return
+        ch = event.char if event.char in "123456789" else ""
+        # Teclado numérico en Windows suele venir como KP_1..KP_9
+        if not ch and event.keysym.startswith("KP_") and event.keysym[-1] in "123456789":
+            ch = event.keysym[-1]
+        if ch in "123456789":
+            self._introducir_digito(int(ch))
 
-    def verificar_victoria(self, event):
+    def _introducir_digito(self, num):
+        if self._celda_focus is None:
+            # Si no hay selección, ir a la primera casilla vacía
+            tablero = self.obtener_tablero_actual()
+            vacias = [(i, j) for i in range(9) for j in range(9) if tablero[i][j] == 0]
+            if not vacias:
+                return
+            self.seleccionar_celda(*vacias[0])
+        i, j = self._celda_focus
+        celda = self.celdas[i][j]
+        if celda._bloqueada:
+            return
+        if celda.es_fijo():
+            self.estado.config(
+                text="Esa casilla es fija. Haz clic en una casilla vacía (candidatos pequeños) y escribe el número.",
+                fg=self.COLOR_ESTADO_ERR,
+            )
+            return
+        # Si la seleccionada ya tiene número de usuario, el dígito lo sustituye;
+        # si está vacía, coloca el candidato (avisando si no es legal).
+        if celda.valor() == 0 and num not in celda._posibles:
+            tablero = self.obtener_tablero_actual()
+            bloquean = celdas_que_bloquean(tablero, i, j, num)
+            self._limpiar_resaltado_pista()
+            # Resalta la casilla actual + las que ya tienen ese número
+            marcar = set(bloquean)
+            marcar.add((i, j))
+            self._marcar_celdas_conflicto(marcar)
+            # También deja pista naranja en las bloqueantes
+            for bi, bj in bloquean:
+                self.celdas[bi][bj].set_bg(self.COLOR_BG_CONFLICTO)
+                self._celdas_resaltadas.add((bi, bj))
+                self._celdas_conflicto_bg.add((bi, bj))
+            self.celdas[i][j].set_bg(self.COLOR_BG_SELECCION)
+            zonas = []
+            for bi, bj in bloquean:
+                if bi == i:
+                    zonas.append(f"fila {i+1} col {bj+1}")
+                elif bj == j:
+                    zonas.append(f"col {j+1} fila {bi+1}")
+                else:
+                    zonas.append(f"caja ({bi+1},{bj+1})")
+            detalle = ", ".join(zonas) if zonas else "sin localizar"
+            self.estado.config(
+                text=(f"El {num} no cabe en fila {i+1}, col {j+1}. "
+                      f"Ya está en: {detalle}. Celdas en rojo = conflicto."),
+                fg=self.COLOR_ESTADO_ERR,
+            )
+            return
+        self.colocar_numero(i, j, num)
+        self.estado.config(
+            text=f"Colocado {num} en fila {i+1}, col {j+1}.",
+            fg=self.COLOR_ESTADO_INF,
+        )
+
+    def verificar_victoria(self, event=None):
+        if not self.tablero_resuelto:
+            return
         for i in range(9):
             for j in range(9):
-                val = self.entries[i][j].get()
-                if val == "" or int(val) != self.tablero_resuelto[i][j]:
+                if self.celdas[i][j].valor() != self.tablero_resuelto[i][j]:
                     return
         self._marcar_victoria()
 
     def _marcar_victoria(self):
-        eliminar_guardado(self._dif_actual())
+        if self._partida_terminada:
+            return
+        self._partida_terminada = True
+        self._detener_timer(guardar_acumulado=True)
+        segundos = int(self._segundos_acumulados)
+        texto_tiempo = formatear_tiempo(segundos)
+        dif = self._dif_actual()
+        eliminar_guardado(dif)
         self._limpiar_resaltado_pista()
-        self.estado.config(text="¡FELICIDADES! Has resuelto el Sudoku correctamente.", fg=self.COLOR_ESTADO_OK)
-        messagebox.showinfo("¡Victoria!", "¡Enhorabuena! Has completado el Sudoku correctamente. 🎉")
+
+        es_record, mejor, historial = registrar_partida_terminada(dif, segundos)
+        lineas_hist = "\n".join(
+            f"  · {p['fecha']}  →  {p['tiempo']}" for p in reversed(historial[-5:])
+        )
+        record_txt = "¡Nuevo récord en este nivel!" if es_record else f"Mejor marca: {formatear_tiempo(mejor)}"
+
+        self.lbl_tiempo.config(text=texto_tiempo, fg="#2E7D32")
+        self.estado.config(
+            text=f"¡Completado en {texto_tiempo}! ({dif})  {record_txt}",
+            fg=self.COLOR_ESTADO_OK
+        )
+        messagebox.showinfo(
+            "¡Victoria!",
+            f"¡Enhorabuena! Has completado el Sudoku.\n\n"
+            f"Nivel: {dif}\n"
+            f"Tiempo: {texto_tiempo}\n"
+            f"{record_txt}\n\n"
+            f"Últimas partidas ({dif}):\n{lineas_hist}"
+        )
         for i in range(9):
             for j in range(9):
-                self.entries[i][j].config(state=tk.DISABLED)
+                self.celdas[i][j].set_bloqueada(True)
 
 
 # ==========================================
