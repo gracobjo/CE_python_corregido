@@ -1,0 +1,27 @@
+2026-11-03 19:40:18,906 - INFO - === INICIO DEL PROCESO ETL ===
+2026-11-03 19:40:31,913 - INFO - Iniciando extracción desde: ventas_restaurante_sucias.csv
+2026-11-03 19:40:31,924 - INFO - Extracción exitosa. Registros cargados: 27
+2026-11-03 19:40:37,577 - INFO - Iniciando fase de Transformación y EDA...
+2026-11-03 19:40:37,578 - INFO - Forma original del dataset: (27, 8)
+2026-11-03 19:40:37,579 - INFO - Valores nulos por columna:
+precio               1
+propina              0
+genero_cliente       0
+es_fumador           0
+dia_semana           1
+turno                0
+cantidad_personas    0
+fecha_registro       0
+dtype: int64
+2026-11-03 19:40:37,581 - INFO - Filas duplicadas encontradas: 2
+2026-11-03 19:40:37,583 - INFO - Duplicados eliminados.
+2026-11-03 19:40:43,555 - INFO - Columnas de texto estandarizadas (strip + title).
+2026-11-03 19:40:43,659 - INFO - Nulos en 'precio' imputados con la mediana: 17.455€
+2026-11-03 19:40:43,660 - INFO - Nulos en 'dia_semana' imputados con la moda: Sun
+2026-11-03 19:40:49,131 - INFO - Tipos de datos convertidos correctamente.
+2026-11-03 19:40:49,132 - INFO - Forma final del dataset: (25, 9)
+2026-11-03 19:40:54,505 - INFO - Iniciando carga de datos...
+2026-11-03 19:40:54,526 - INFO - ✅ Carga completada exitosamente en:
+ - ventas_restaurante_sucias_limpio.csv
+ - ventas_restaurante_sucias_limpio.parquet
+2026-11-03 19:40:54,527 - INFO - === FIN DEL PROCESO ETL ===

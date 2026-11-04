@@ -1,0 +1,11 @@
+id_venta,fecha,cliente,producto,categoria,precio,cantidad,ciudad,valor_total
+1,2023-01-10,Ana,Laptop,Electronica,1000.0,1,Madrid,1000.0
+2,2023-02-10,Luis,Mouse,Electronica,25.0,2,Barcelona,50.0
+2,2023-02-10,Luis,Mouse,Electronica,25.0,2,Barcelona,50.0
+3,2023-10-03,Pedro,Teclado,Electronica,172.5,1,Madrid,172.5
+4,2023-05-10,Marta,Monitor,Electronica,300.0,1,Madrid,300.0
+5,2023-06-10,Ana,Laptop,Electronica,1000.0,1,Madrid,1000.0
+6,2023-07-10,Luis,Mouse,Electronica,25.0,3,Barcelona,75.0
+7,2023-08-10,Pedro,Teclado,Electronica,45.0,1,Madrid,45.0
+8,2023-09-10,Marta,Monitor,Electronica,172.5,1,Sevilla,172.5
+9,2023-10-10,Ana,Laptop,Electronica,1000.0,1,Madrid,1000.0
