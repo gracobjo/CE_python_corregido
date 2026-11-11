@@ -1,0 +1,7 @@
+esta es la linea 1 del fichero 1
+esta es la linea 2 del fichero 1
+esta es la linea 3 del fichero 1
+esta es la linea 4 del fichero 1
+esta es la linea 5 del fichero 1
+esta es la linea 6 del fichero 1
+esta es la linea 7 del fichero 1
