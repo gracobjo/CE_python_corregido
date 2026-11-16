@@ -1,0 +1,72 @@
+[
+  {
+    "dni": "12345678A",
+    "nombre": "Alejandro García",
+    "edad": 28,
+    "ciudad": "Madrid",
+    "telefono": "600123456"
+  },
+  {
+    "dni": "87654321B",
+    "nombre": "María Rodríguez",
+    "edad": 34,
+    "ciudad": "Barcelona",
+    "telefono": "611234567"
+  },
+  {
+    "dni": "23456789C",
+    "nombre": "Carlos Martínez",
+    "edad": 42,
+    "ciudad": "Valencia",
+    "telefono": "622345678"
+  },
+  {
+    "dni": "98765432D",
+    "nombre": "Ana López",
+    "edad": 23,
+    "ciudad": "Sevilla",
+    "telefono": "633456789"
+  },
+  {
+    "dni": "34567890E",
+    "nombre": "David González",
+    "edad": 31,
+    "ciudad": "Zaragoza",
+    "telefono": "644567890"
+  },
+  {
+    "dni": "09876543F",
+    "nombre": "Laura Pérez",
+    "edad": 29,
+    "ciudad": "Málaga",
+    "telefono": "655678901"
+  },
+  {
+    "dni": "45678901G",
+    "nombre": "Javier Sánchez",
+    "edad": 38,
+    "ciudad": "Murcia",
+    "telefono": "666789012"
+  },
+  {
+    "dni": "10987654H",
+    "nombre": "Elena Ramírez",
+    "edad": 25,
+    "ciudad": "Palma de Mallorca",
+    "telefono": "677890123"
+  },
+  {
+    "dni": "56789012I",
+    "nombre": "Sergio Fernández",
+    "edad": 50,
+    "ciudad": "Bilbao",
+    "telefono": "688901234"
+  },
+  {
+    "dni": "21098765J",
+    "nombre": "Carmen Torres",
+    "edad": 45,
+    "ciudad": "Alicante",
+    "telefono": "699012345"
+  }
+]

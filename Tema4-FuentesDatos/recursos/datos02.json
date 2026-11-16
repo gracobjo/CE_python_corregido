@@ -1,0 +1,28 @@
+{
+  "vehiculo": {
+    "marca": "Toyota",
+    "modelo": "RAV4",
+    "anio": 2024,
+    "tipo_carroceria": "SUV",
+    "color": "Gris Grafito",
+    "kilometraje": 15200,
+    "especificaciones_tecnicas": {
+      "motor": "2.5L 4 cilindros",
+      "transmision": "Automática eCVT",
+      "tipo_combustible": "Híbrido",
+      "potencia_hp": 219,
+      "traccion": "AWD (Tracción integral)"
+    },
+    "equipamiento": {
+      "techo_solar": true,
+      "asientos_cuero": true,
+      "conectividad": ["Apple CarPlay", "Android Auto", "Bluetooth"],
+      "camara_reversa": true
+    },
+    "estado_legal": {
+      "matricula": "ABC-1234",
+      "seguro_vigente": true,
+      "ultimo_mantenimiento": "2026-08-15"
+    }
+  }
+}
