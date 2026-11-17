@@ -172,7 +172,10 @@ def convertir(session, moneda_origen, moneda_destino, cantidad):
 
 
 def main():
-    load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
+    ruta_env = Path(__file__).resolve().parents[2] / ".env"
+    if not ruta_env.is_file():
+        ruta_env = Path(__file__).with_name(".env")
+    load_dotenv(dotenv_path=ruta_env)
     api_key = os.getenv("RESTCOUNTRIES_API_KEY")
     if not api_key:
         raise RuntimeError(
