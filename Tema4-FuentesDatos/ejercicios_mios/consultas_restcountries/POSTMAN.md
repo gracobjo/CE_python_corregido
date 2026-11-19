@@ -56,6 +56,201 @@ recomienda conservar también `names.common`.
 de la respuesta. Los registros están en `data.objects` y la información de
 paginación en `data.meta`.
 
+## Consultas disponibles en esta carpeta
+
+Cada script de Python selecciona solo los campos que necesita. Para repetir
+una consulta en Postman, conserva la configuración de autenticación anterior y
+usa estos valores en **Params**:
+
+| Script | `response_fields` | Parámetros adicionales | Qué hace |
+|---|---|---|---|
+| `explorar_json.py` | `names,codes,capitals,flag,region,subregion,continents,borders` | `q` = nombre, traducción o código del país | Busca un país y permite inspeccionar el objeto JSON y sus ramas. |
+| `banderas.py` | `names,codes.alpha_3,flag.url_png` | `q` = país; una búsqueda por petición | Busca el PNG y lo descarga desde la URL devuelta. |
+| `fronteras.py` | `names.common,codes.alpha_3,borders` | Ninguno | Conserva países con fronteras y permite ordenarlos por nombre o por cantidad. |
+| `conduccion.py` | `names.common,cars.driving_side` | Ninguno | Agrupa los países con conducción por la izquierda (`left`) o derecha (`right`). |
+| `organizaciones.py` | `names.common,memberships` | Ninguno | Agrupa países por organizaciones cuya pertenencia es `true` y cuenta las afiliaciones. |
+| `espanol.py` | `names.common,languages` | Ninguno | Busca español en los datos de idiomas. No determina si es idioma oficial. |
+| `exportar_csv.py` | `names.common,codes.alpha_3,continents,region,subregion,population,flag.url_png,capitals,memberships,currencies,languages,borders,cars.driving_side,area.kilometers,landlocked,timezones` | Ninguno | Obtiene los datos usados para construir el CSV KPI. |
+
+Para las consultas sin `q`, configura `limit=100` y `offset=0` como en la
+petición principal. Para `explorar_json.py` y `banderas.py`, añade también
+`q` con el país a buscar (por ejemplo, `España` o `ESP`). `q` puede devolver
+coincidencias; revisa `data.objects` y elige el país correcto.
+
+### Inspeccionar un país: `explorar_json.py`
+
+Con los campos de la tabla y `q=España`, **Post-response** puede mostrar el
+objeto devuelto en la consola:
+
+```javascript
+const body = pm.response.json();
+console.log(JSON.stringify(body.data.objects, null, 2));
+```
+
+Si quieres explorar más ramas, añade sus rutas a `response_fields`. Para ver
+todos los campos disponibles, omite ese parámetro, teniendo en cuenta que la
+respuesta será mucho mayor.
+
+### Descargar una bandera: `banderas.py`
+
+Primero solicita los datos del país con los campos de la tabla. Copia
+`flag.url_png` de `data.objects` y úsala como URL de una segunda petición **GET**
+para descargar la imagen. Esa segunda petición va al dominio de las banderas:
+no le envíes el encabezado Bearer de la API. En Postman puedes guardar la
+respuesta de imagen desde **Save Response**.
+
+### Filtrar y ordenar países con fronteras: `fronteras.py`
+
+La petición trae `borders`; el siguiente script conserva los países con al
+menos una frontera y los muestra ordenados alfabéticamente:
+
+```javascript
+const paises = pm.response.json().data.objects
+  .filter(function (pais) {
+    return Array.isArray(pais.borders) && pais.borders.length > 0;
+  })
+  .sort(function (a, b) {
+    return a.names.common.localeCompare(b.names.common);
+  });
+
+console.table(paises.map(function (pais) {
+  return {
+    pais: pais.names.common,
+    codigo: pais.codes.alpha_3,
+    numero_fronteras: pais.borders.length
+  };
+}));
+```
+
+Para ordenarlos por cantidad de fronteras, sustituye el comparador de
+`sort` por:
+
+```javascript
+paises.sort(function (a, b) {
+  return b.borders.length - a.borders.length;
+});
+```
+
+Para orden descendente por nombre, invierte el orden de los argumentos de
+`localeCompare`.
+
+### Agrupar por conducción: `conduccion.py`
+
+La petición ya está configurada en la sección anterior. Este ejemplo agrupa y
+ordena los nombres en Postman:
+
+```javascript
+const paises = pm.response.json().data.objects;
+const grupos = { left: [], right: [] };
+
+paises.forEach(function (pais) {
+  const lado = pais.cars && pais.cars.driving_side;
+  if (grupos[lado]) {
+    grupos[lado].push(pais.names.common);
+  }
+});
+
+grupos.left.sort();
+grupos.right.sort();
+console.log("Conducción por la izquierda:", grupos.left);
+console.log("Conducción por la derecha:", grupos.right);
+```
+
+### Agrupar por organizaciones: `organizaciones.py`
+
+`memberships` es un objeto cuyas claves son organizaciones. Solo se cuentan
+las que tienen valor `true`:
+
+```javascript
+const paises = pm.response.json().data.objects;
+const grupos = {};
+
+paises.forEach(function (pais) {
+  const memberships = pais.memberships || {};
+  Object.keys(memberships).forEach(function (organizacion) {
+    if (memberships[organizacion] === true) {
+      if (!grupos[organizacion]) {
+        grupos[organizacion] = [];
+      }
+      grupos[organizacion].push(pais.names.common);
+    }
+  });
+});
+
+console.log("Países por organización:", grupos);
+console.log("Número de organizaciones por país:",
+  paises.map(function (pais) {
+    const memberships = pais.memberships || {};
+    const cantidad = Object.keys(memberships).filter(function (organizacion) {
+      return memberships[organizacion] === true;
+    }).length;
+    return { pais: pais.names.common, numero_organizaciones: cantidad };
+  })
+);
+```
+
+### Buscar países con español: `espanol.py`
+
+`languages` puede ser una lista o un objeto. Este ejemplo revisa los nombres y
+códigos de idioma que utiliza el script Python:
+
+```javascript
+function normalizar(texto) {
+  return texto.normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function tieneEspanol(pais) {
+  const idiomas = Array.isArray(pais.languages)
+    ? pais.languages
+    : Object.values(pais.languages || {});
+  const claves = [
+    "bcp47", "iso_639_1", "iso639_1", "code", "name", "native_name"
+  ];
+
+  return idiomas.some(function (idioma) {
+    const valores = typeof idioma === "string"
+      ? [idioma]
+      : claves.map(function (clave) {
+          return idioma && typeof idioma === "object" ? idioma[clave] : null;
+        });
+
+    return valores.some(function (valor) {
+      if (typeof valor !== "string") {
+        return false;
+      }
+      const texto = normalizar(valor);
+      return texto === "es" || texto.startsWith("es-") ||
+        texto === "spanish" || texto === "espanol";
+    });
+  });
+}
+
+const hispanohablantes = pm.response.json().data.objects
+  .filter(tieneEspanol)
+  .map(function (pais) {
+    return pais.names.common;
+  })
+  .sort();
+
+console.log("Países con español en languages:", hispanohablantes);
+```
+
+Como en el script Python, esto solo indica que el campo `languages` incluye
+español; no clasifica su oficialidad.
+
+### Datos KPI: `exportar_csv.py`
+
+Usa todos los campos de la última fila de la tabla y recorre las páginas. En
+Postman puedes inspeccionar o guardar la respuesta JSON. El CSV del script
+Python, además, transforma los datos: une listas, cuenta idiomas, fronteras y
+organizaciones, calcula densidad de población y establece el orden y
+delimitador de columnas. Esas transformaciones no las aplica automáticamente
+la consulta HTTP; para obtener exactamente el CSV del ejercicio, ejecuta
+`exportar_csv.py`.
+
 ## 3. Validar y resumir la respuesta
 
 En **Scripts → Post-response**, se puede comprobar el estado y los campos, y
