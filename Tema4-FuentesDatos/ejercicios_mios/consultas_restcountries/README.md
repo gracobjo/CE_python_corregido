@@ -26,6 +26,9 @@ python espanol.py
 python exportar_csv.py
 ```
 
+Para probar las consultas desde Postman, configurar la autenticación y
+seleccionar campos, consulta la [guía de Postman](./POSTMAN.md).
+
 `banderas.py` solicita uno o varios nombres separados por comas y descarga
 los PNG en `Tema4-FuentesDatos/recursos/banderas`. El CSV se guarda en
 `Tema4-FuentesDatos/recursos/paises_kpi.csv`.
