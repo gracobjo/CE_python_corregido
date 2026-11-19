@@ -9,6 +9,7 @@ Material de apoyo en notebooks de Jupyter, organizado por temas.
 | [`Indice_CE_Python.ipynb`](Indice_CE_Python.ipynb) | Índice general del curso |
 | [`Tema 1 - Lenguaje Python/`](Tema%201%20-%20Lenguaje%20Python/) | Sintaxis, estructuras de control, funciones, colecciones, módulos… |
 | [`Tema 2 - Programación Orientada a Objetos/`](Tema%202%20-%20Programaci%C3%B3n%20Orientada%20a%20Objetos/) | Clases, encapsulamiento, herencia y MRO |
+| [`Tema4-FuentesDatos/`](Tema4-FuentesDatos/) | Ficheros, CSV, JSON y consultas a fuentes de datos |
 | [`Imagenes/`](Imagenes/) | Recursos gráficos compartidos |
 
 ## Cómo estudiar
