@@ -56,6 +56,25 @@ recomienda conservar también `names.common`.
 de la respuesta. Los registros están en `data.objects` y la información de
 paginación en `data.meta`.
 
+### Mostrar los países sin `meta` en Postman
+
+La API devuelve `data.meta` como parte de su respuesta y `response_fields` no
+puede quitarlo. Si solo quieres ver los países en Postman, añade este código
+en **Scripts → Post-response**:
+
+```javascript
+const body = pm.response.json();
+pm.visualizer.set(
+  "<pre>{{json}}</pre>",
+  { json: JSON.stringify(body.data.objects, null, 2) }
+);
+```
+
+Después de enviar la petición, abre la pestaña **Visualize** para ver solo
+`data.objects`, sin `data.meta`. La pestaña **Body** seguirá mostrando la
+respuesta HTTP original. Si ya tienes otro script Post-response, añade este
+bloque al final del mismo.
+
 ## Consultas disponibles en esta carpeta
 
 Cada script de Python selecciona solo los campos que necesita. Para repetir
@@ -76,6 +95,62 @@ Para las consultas sin `q`, configura `limit=100` y `offset=0` como en la
 petición principal. Para `explorar_json.py` y `banderas.py`, añade también
 `q` con el país a buscar (por ejemplo, `España` o `ESP`). `q` puede devolver
 coincidencias; revisa `data.objects` y elige el país correcto.
+
+### URLs completas de ejemplo
+
+Estas URL se pueden pegar directamente en el campo de la petición **GET**.
+Para `explorar_json.py` y `banderas.py`, cambia `España` por el país que quieras
+consultar; `%C3%B1` representa la `ñ` codificada en la URL. La clave API no se
+incluye en la URL: configúrala en **Authorization → Bearer Token**.
+
+**`explorar_json.py` — inspeccionar España:**
+
+```text
+https://api.restcountries.com/countries/v5?response_fields=names,codes,capitals,flag,region,subregion,continents,borders&q=Espa%C3%B1a&limit=100&offset=0
+```
+
+**`banderas.py` — obtener la URL PNG de España:**
+
+```text
+https://api.restcountries.com/countries/v5?response_fields=names,codes.alpha_3,flag.url_png&q=Espa%C3%B1a&limit=100&offset=0
+```
+
+La descarga de la imagen es una segunda petición **GET** a la URL
+`flag.url_png` devuelta por la consulta anterior.
+
+**`fronteras.py` — países y códigos con sus fronteras:**
+
+```text
+https://api.restcountries.com/countries/v5?response_fields=names.common,codes.alpha_3,borders&limit=100&offset=0
+```
+
+**`conduccion.py` — países y lado de circulación:**
+
+```text
+https://api.restcountries.com/countries/v5?response_fields=names.common,cars.driving_side&limit=100&offset=0
+```
+
+**`organizaciones.py` — membresías de cada país:**
+
+```text
+https://api.restcountries.com/countries/v5?response_fields=names.common,memberships&limit=100&offset=0
+```
+
+**`espanol.py` — países y sus idiomas:**
+
+```text
+https://api.restcountries.com/countries/v5?response_fields=names.common,languages&limit=100&offset=0
+```
+
+**`exportar_csv.py` — campos utilizados para el CSV KPI:**
+
+```text
+https://api.restcountries.com/countries/v5?response_fields=names.common,codes.alpha_3,continents,region,subregion,population,flag.url_png,capitals,memberships,currencies,languages,borders,cars.driving_side,area.kilometers,landlocked,timezones&limit=100&offset=0
+```
+
+Para pedir la siguiente página, cambia `offset=0` por `offset=100` (o por la
+cantidad de registros de la página anterior). El token Bearer se mantiene en
+Authorization para todas las consultas a la API.
 
 ### Inspeccionar un país: `explorar_json.py`
 
