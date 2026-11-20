@@ -1,0 +1,11 @@
+services:
+  dashboard:
+    build: .
+    ports:
+      - "127.0.0.1:8501:8501"
+    environment:
+      MOVEBANK_USERNAME: ${MOVEBANK_USERNAME:-}
+      MOVEBANK_PASSWORD: ${MOVEBANK_PASSWORD:-}
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
