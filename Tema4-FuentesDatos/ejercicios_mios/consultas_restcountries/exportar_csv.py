@@ -17,7 +17,7 @@ CAMPOS = (
     "flag.url_png,capitals,memberships,currencies,languages,borders,"
     "cars.driving_side,area.kilometers,landlocked,timezones"
 )
-COLUMNAS = (
+COLUMNAS: tuple[str, ...] = (
     "codigo_alpha3",
     "pais",
     "continentes",
